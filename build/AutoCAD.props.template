@@ -1,0 +1,18 @@
+<Project>
+  <PropertyGroup>
+    <!--
+      Скопируйте этот файл в build\AutoCAD.props и укажите СВОИ пути.
+      Инструкция: docs\BUILD.md
+    -->
+
+    <!-- AutoCAD 2016, 2017, … 2024 — сборка: build\build-ac2016.cmd  (-f net46) -->
+    <AutoCADSdkDirNet46>C:\Program Files\Autodesk\AutoCAD 2016\</AutoCADSdkDirNet46>
+
+    <!-- AutoCAD 2025, 2026 — сборка: build\build-ac2026.cmd  (-f net8.0-windows) -->
+    <!-- Раскомментируйте, если собираете обе версии DLL: -->
+    <!-- <AutoCADSdkDirNet8>C:\Program Files\Autodesk\AutoCAD 2026\</AutoCADSdkDirNet8> -->
+
+    <!-- Запасной путь (если не заданы Net46/Net8): -->
+    <!-- <AutoCADSdkDir>C:\Program Files\Autodesk\AutoCAD 2016\</AutoCADSdkDir> -->
+  </PropertyGroup>
+</Project>

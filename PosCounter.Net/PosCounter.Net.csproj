@@ -1,0 +1,90 @@
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+  <!-- Пути к AutoCAD: build\AutoCAD.props подключается через Directory.Build.props в корне репозитория. -->
+
+  <PropertyGroup>
+    <!-- Prefer x64 platform in VS/MSBuild (matches AutoCAD 2016 x64 managed API). -->
+    <Platforms>x64</Platforms>
+    <!--
+      AutoCAD 2016-2024: .NET Framework API (net46).
+      AutoCAD 2025+: .NET 8 API (net8.0-windows).
+      We multi-target so the same codebase can be built for both.
+    -->
+    <!--
+      Default (for AutoCAD 2016): only net46 to avoid IDE/VS trying to resolve net8 refs.
+      net8.0-windows is enabled only when:
+      - AutoCADSdkDirNet8 is set (you have AutoCAD 2025+ SDK), OR
+      - you explicitly build with -p:TargetFramework=net8.0-windows
+    -->
+    <TargetFrameworks>net46</TargetFrameworks>
+    <TargetFrameworks Condition="'$(AutoCADSdkDirNet8)' != ''">net46;net8.0-windows</TargetFrameworks>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>PosCounter.Net</RootNamespace>
+    <AssemblyName>PosCounter.Net</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <!-- AutoCAD 2016 x64 API assemblies are AMD64; avoid MSIL/AnyCPU mismatch warnings. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <Nullable>disable</Nullable>
+    <Version>4.2.0</Version>
+    <InformationalVersion>4.2.0-table-grid-lines</InformationalVersion>
+  </PropertyGroup>
+
+  <!-- Allow separate AutoCAD install paths per target framework -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net46'">
+    <AutoCADSdkDirEffective Condition="'$(AutoCADSdkDirNet46)' != ''">$([MSBuild]::EnsureTrailingSlash('$(AutoCADSdkDirNet46)'))</AutoCADSdkDirEffective>
+    <AutoCADSdkDirEffective Condition="'$(AutoCADSdkDirEffective)' == ''">$([MSBuild]::EnsureTrailingSlash('$(AutoCADSdkDir)'))</AutoCADSdkDirEffective>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <AutoCADSdkDirEffective Condition="'$(AutoCADSdkDirNet8)' != ''">$([MSBuild]::EnsureTrailingSlash('$(AutoCADSdkDirNet8)'))</AutoCADSdkDirEffective>
+    <AutoCADSdkDirEffective Condition="'$(AutoCADSdkDirEffective)' == ''">$([MSBuild]::EnsureTrailingSlash('$(AutoCADSdkDir)'))</AutoCADSdkDirEffective>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net46'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net46" Version="1.0.3" PrivateAssets="all" />
+    <!-- C# 7 tuples (Sample, Plain, Score) и Dictionary (r,c) — в .NET 4.6 нет встроенно -->
+    <PackageReference Include="System.ValueTuple" Version="4.5.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Microsoft.CSharp" Condition="'$(TargetFramework)' == 'net46'" />
+    <Reference Include="AcMgd">
+      <HintPath>$(AutoCADSdkDirEffective)AcMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AcDbMgd">
+      <HintPath>$(AutoCADSdkDirEffective)AcDbMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AcCoreMgd">
+      <HintPath>$(AutoCADSdkDirEffective)AcCoreMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AdWindows" Condition="Exists('$(AutoCADSdkDirEffective)AdWindows.dll')">
+      <HintPath>$(AutoCADSdkDirEffective)AdWindows.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="ValidateAutoCadReferences" BeforeTargets="ResolveReferences">
+    <!-- In Visual Studio design-time builds we don't hard-fail on missing/mismatched SDK paths. -->
+    <Error Condition="'$(DesignTimeBuild)' != 'true' and '$(AutoCADSdkDirEffective)' == ''" Text="Путь к AutoCAD не задан. Создайте build\AutoCAD.props (из build\AutoCAD.props.template) в КОРНЕ репозитория (папка build рядом с PosCounter.Net) или в PosCounter.Net\build\ — с AutoCADSdkDirNet46=папка AutoCAD 2016." />
+    <Error Condition="'$(DesignTimeBuild)' != 'true' and !Exists('$(AutoCADSdkDirEffective)AcMgd.dll')" Text="AcMgd.dll not found at $(AutoCADSdkDirEffective)AcMgd.dll — проверьте, что AutoCAD 2016 установлен; папка может называться иначе (например AutoCAD 2016 - Русский). Найти файл: в PowerShell: Get-ChildItem 'C:\Program Files\Autodesk' -Recurse -Filter AcMgd.dll -ErrorAction SilentlyContinue | Select-Object -First 3 FullName. Укажите эту папку в build\AutoCAD.props → AutoCADSdkDirNet46." />
+    <Error Condition="'$(DesignTimeBuild)' != 'true' and !Exists('$(AutoCADSdkDirEffective)AcDbMgd.dll')" Text="AcDbMgd.dll not found at $(AutoCADSdkDirEffective)AcDbMgd.dll" />
+    <Error Condition="'$(DesignTimeBuild)' != 'true' and !Exists('$(AutoCADSdkDirEffective)AcCoreMgd.dll')" Text="AcCoreMgd.dll not found at $(AutoCADSdkDirEffective)AcCoreMgd.dll" />
+
+    <GetAssemblyIdentity AssemblyFiles="$(AutoCADSdkDirEffective)AcMgd.dll" Condition="Exists('$(AutoCADSdkDirEffective)AcMgd.dll')">
+      <Output TaskParameter="Assemblies" ItemName="AcMgdIdentity" />
+    </GetAssemblyIdentity>
+
+    <!-- net46 must not reference AutoCAD 2025+ assemblies -->
+    <Error
+      Condition="'$(DesignTimeBuild)' != 'true' and '$(TargetFramework)' == 'net46' and '@(AcMgdIdentity)' != '' and $([MSBuild]::VersionGreaterThanOrEquals('%(AcMgdIdentity.Version)', '25.0'))"
+      Text="Detected AcMgd.dll version %(AcMgdIdentity.Version) from $(AutoCADSdkDirEffective). This target is net46 and requires AutoCAD .NET Framework API assemblies (typically AutoCAD 2016-2024). Build the net8.0-windows target for AutoCAD 2025+." />
+
+    <!-- net8 should reference AutoCAD 2025+ assemblies -->
+    <Error
+      Condition="'$(DesignTimeBuild)' != 'true' and '$(TargetFramework)' == 'net8.0-windows' and '@(AcMgdIdentity)' != '' and $([MSBuild]::VersionLessThan('%(AcMgdIdentity.Version)', '25.0'))"
+      Text="Detected AcMgd.dll version %(AcMgdIdentity.Version) from $(AutoCADSdkDirEffective). This target is net8.0-windows (AutoCAD 2025+). Point AutoCADSdkDir to AutoCAD 2025+ installation." />
+  </Target>
+</Project>

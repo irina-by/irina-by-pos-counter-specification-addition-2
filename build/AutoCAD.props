@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <!-- Local (engineer-specific) paths to AutoCAD install folders. -->
+    <!-- AutoCAD 2016–2024 (.NET Framework API) -->
+    <AutoCADSdkDirNet46>C:\Program Files\Autodesk\AutoCAD 2016\</AutoCADSdkDirNet46>
+
+    <!-- AutoCAD 2025+ (.NET 8 API) -->
+    <AutoCADSdkDirNet8>C:\Program Files\Autodesk\AutoCAD 2026\</AutoCADSdkDirNet8>
+
+    <!-- Optional fallback (avoid pointing this to AutoCAD 2025+ when building net46) -->
+    <!-- <AutoCADSdkDir>C:\Program Files\Autodesk\AutoCAD 2016\</AutoCADSdkDir> -->
+  </PropertyGroup>
+</Project>

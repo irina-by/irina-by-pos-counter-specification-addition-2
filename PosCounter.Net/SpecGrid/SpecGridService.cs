@@ -1,0 +1,1322 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using Autodesk.AutoCAD.ApplicationServices;
+using Autodesk.AutoCAD.Colors;
+using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.EditorInput;
+using Autodesk.AutoCAD.Geometry;
+using PosCounter.Net.Models;
+
+namespace PosCounter.Net.SpecGrid
+{
+    internal sealed class SpecPickResult
+    {
+        public bool Success;
+        public string Error;
+        public int QtyWritten;
+        public int QtySkipped;
+        /// <summary>Марки в таблице, для которых в палитре нет количества (§19.16).</summary>
+        public List<int> MissingQtyMarks = new List<int>();
+    }
+
+    /// <summary>§19.15: оформление штатного текста «Кол.» (не примечание инженера).</summary>
+    internal sealed class QtyTableTextAppearance
+    {
+        public bool Found;
+        public ObjectId TextStyleId = ObjectId.Null;
+        public string Layer;
+        /// <summary>§19.19: цвет с штатного текста таблицы (не ByLayer слоя примечания).</summary>
+        public Color EntityColor = Color.FromColorIndex(ColorMethod.ByLayer, 256);
+        public bool HasEntityColor;
+        public LineWeight LineWeight = LineWeight.ByLayer;
+        /// <summary>Высота из текста спецификации (ColQty → тело таблицы).</summary>
+        public double TextHeight;
+        public bool HasTextHeight;
+    }
+
+    internal static class SpecGridService
+    {
+        /// <summary>Запасная высота «Кол.», если в таблице нет образца текста.</summary>
+        public const double QtyTextHeightFallback = 2.5;
+
+        public static SpecPickResult RunSelectSpecification(Document doc, IReadOnlyDictionary<int, int> qtyByKey, SpecGridLog log)
+        {
+            var result = new SpecPickResult();
+            if (doc == null)
+            {
+                result.Error = "Нет активного документа";
+                return result;
+            }
+
+            // Диагностика отключена (TABLE-GRID, QTY-LOG, ROW-DATA, QTY-UPSERT).
+
+            if (!TryPickAllSpecificationTables(doc, out var tablePicks, out var pickError))
+            {
+                result.Error = pickError;
+                return result;
+            }
+
+            using (doc.LockDocument())
+            {
+                try
+                {
+                    using (var tr = doc.Database.TransactionManager.StartTransaction())
+                    {
+                        SpecGridSession.ClearScopes();
+                        SpecGridSession.SharedGridLayer = null;
+                        var builtScopes = new List<ScopeGridResult>();
+                        for (var i = 0; i < tablePicks.Count; i++)
+                        {
+                            var gridLayer = i == 0 ? null : SpecGridSession.SharedGridLayer;
+                            var scope = TableGridBuilder.Build(i, tablePicks[i], tr, gridLayer, log);
+                            builtScopes.Add(scope);
+                            if (i == 0 && !string.IsNullOrWhiteSpace(scope.GridLayer))
+                            {
+                                SpecGridSession.SharedGridLayer = scope.GridLayer;
+                            }
+                            else if (i > 0 && !scope.Valid && builtScopes[0].Valid)
+                            {
+                                builtScopes[i] = TableGridBuilder.Build(i, tablePicks[i], tr, builtScopes[0].GridLayer, log);
+                            }
+                        }
+
+                        SpecGridSession.SetScopes(builtScopes);
+
+                        ReportGridBuildWarnings(doc, builtScopes);
+                        ReportDetectedHeader(doc, builtScopes);
+                        ReportEmptyMarkColumnWarnings(doc, builtScopes);
+
+                        result.QtyWritten = WriteQtyInTransaction(tr, qtyByKey, log, out var skipped);
+                        result.QtySkipped = skipped;
+                        tr.Commit();
+                    }
+
+                    result.MissingQtyMarks = CollectMissingQtyMarks(qtyByKey);
+                    ReportMissingQtyMarks(doc, result.MissingQtyMarks);
+
+                    try
+                    {
+                        doc.Editor?.Regen();
+                    }
+                    catch
+                    {
+                        // ignore
+                    }
+                }
+                catch (Exception ex)
+                {
+                    result.Error = ex.Message;
+                    return result;
+                }
+            }
+
+            result.Success = true;
+            return result;
+        }
+
+        private static void ReportDetectedHeader(Document doc, IReadOnlyList<ScopeGridResult> scopes)
+        {
+            if (doc == null || scopes == null)
+            {
+                return;
+            }
+
+            for (var i = 0; i < scopes.Count; i++)
+            {
+                var scope = scopes[i];
+                if (scope == null)
+                {
+                    continue;
+                }
+
+                var scopeNum = scope.ScopeIndex + 1;
+                var mark = DescribeHeaderColumn(scope, scope.ColMark);
+                var name = DescribeHeaderColumn(scope, scope.ColName);
+                var qty = DescribeHeaderColumn(scope, scope.ColQty);
+                var msg =
+                    $"[POSC] Распознана шапка (таблица {scopeNum}): " +
+                    $"Марка — {(scope.ColMark >= 0 ? $"столбец {scope.ColMark} «{mark}»" : "не найдена")}; " +
+                    $"Наименование — {(scope.ColName >= 0 ? $"столбец {scope.ColName} «{name}»" : "не найдено")}; " +
+                    $"Кол. — {(scope.ColQty >= 0 ? $"столбец {scope.ColQty} «{qty}»" : "не найдена")}.";
+                SpecGridLog.WriteCommandLine(doc, msg);
+
+                var refineMsg = TableGridBuilder.FormatColMarkRefineMessage(scope);
+                if (!string.IsNullOrWhiteSpace(refineMsg))
+                {
+                    SpecGridLog.WriteCommandLine(doc, refineMsg);
+                }
+
+                if (!scope.Valid)
+                {
+                    continue;
+                }
+
+                if (scope.ColMark < 0)
+                {
+                    SpecGridLog.WriteCommandLine(
+                        doc,
+                        "[POSC] Колонка «Поз./Марка» не распознана — проверьте заголовок в шапке таблицы.");
+                }
+                else if (mark == "—")
+                {
+                    SpecGridLog.WriteCommandLine(
+                        doc,
+                        $"[POSC] Заголовок столбца Марка не прочитан (столбец {scope.ColMark}) — проверьте MText/слой в шапке.");
+                }
+
+                if (scope.ColQty < 0)
+                {
+                    SpecGridLog.WriteCommandLine(
+                        doc,
+                        "[POSC] Колонка «Кол.» не распознана — проверьте заголовок (MText) и строку шапки в таблице.");
+                }
+                else if (qty == "—")
+                {
+                    SpecGridLog.WriteCommandLine(
+                        doc,
+                        $"[POSC] Заголовок столбца «Кол.» не прочитан (столбец {scope.ColQty}) — проверьте MText/слой в шапке.");
+                }
+
+                if (scope.ColName < 0)
+                {
+                    SpecGridLog.WriteCommandLine(
+                        doc,
+                        "[POSC] Колонка «Наименование» не распознана — проверьте заголовок в шапке таблицы.");
+                }
+                else if (name == "—")
+                {
+                    SpecGridLog.WriteCommandLine(
+                        doc,
+                        $"[POSC] Заголовок столбца Наименование не прочитан (столбец {scope.ColName}) — проверьте MText/слой в шапке.");
+                }
+
+                if (scope.ColMark < 0 || scope.ColQty < 0)
+                {
+                    var diag = TableGridBuilder.BuildHeaderDiagnosticMessage(scope);
+                    if (!string.IsNullOrWhiteSpace(diag))
+                    {
+                        SpecGridLog.WriteCommandLine(
+                            doc,
+                            $"[POSC] Диагностика шапки (таблица {scopeNum}): {diag}");
+                    }
+
+                    foreach (var line in TableGridBuilder.BuildHeaderTopBandDiagnostic(scope))
+                    {
+                        SpecGridLog.WriteCommandLine(doc, line);
+                    }
+
+                    if (!scope.HeaderDetectedByTopTextBand && TableGridBuilder.IsAllHeaderGeomZero(scope))
+                    {
+                        foreach (var line in TableGridBuilder.BuildHeaderExtendedDiagnostic(scope))
+                        {
+                            SpecGridLog.WriteCommandLine(doc, line);
+                        }
+                    }
+                }
+            }
+        }
+
+        private static string DescribeHeaderColumn(ScopeGridResult scope, int col)
+        {
+            if (scope == null || col < 0)
+            {
+                return "—";
+            }
+
+            var s = MTextPlainText.SanitizeRawContents(TableGridBuilder.BuildHeaderTextForColumn(scope, col));
+            if (string.IsNullOrWhiteSpace(s))
+            {
+                return "—";
+            }
+
+            s = s.Trim();
+            return s.Length > 24 ? s.Substring(0, 24) + "…" : s;
+        }
+
+        public static Dictionary<int, string> BuildCombinedMarkNames()
+        {
+            var map = new Dictionary<int, string>();
+            foreach (var scope in SpecGridSession.Scopes)
+            {
+                MergeScopeNames(map, scope);
+            }
+
+            return map;
+        }
+
+        private static void MergeScopeNames(Dictionary<int, string> map, ScopeGridResult scope)
+        {
+            if (scope == null || !scope.Valid)
+            {
+                return;
+            }
+
+            foreach (var key in scope.KeyToRowMark.Keys)
+            {
+                var merged = TableGridBuilder.ResolveNameFromMergeGroup(scope, key);
+                if (string.IsNullOrWhiteSpace(merged))
+                {
+                    continue;
+                }
+
+                if (!map.ContainsKey(key) || string.IsNullOrWhiteSpace(map[key]))
+                {
+                    map[key] = merged;
+                }
+            }
+        }
+
+        /// <summary>§19.18: 1..N таблиц — Enter без выделения завершает цикл.</summary>
+        private static bool TryPickAllSpecificationTables(Document doc, out List<ObjectId[]> picks, out string error)
+        {
+            picks = new List<ObjectId[]>();
+            error = null;
+            var ed = doc?.Editor;
+            if (ed == null)
+            {
+                error = "Нет редактора чертежа";
+                return false;
+            }
+
+            var tableNum = 1;
+            const int maxTables = 50;
+            while (tableNum <= maxTables)
+            {
+                var prompt = tableNum == 1
+                    ? "\nВыделите рамкой объекты первой таблицы. Для завершения нажмите Enter без выделения: "
+                    : $"\nВыделите рамкой объекты таблицы {tableNum}. Для завершения нажмите Enter без выделения: ";
+                var selOpts = new PromptSelectionOptions
+                {
+                    MessageForAdding = prompt
+                };
+                var psr = ed.GetSelection(selOpts);
+                if (psr.Status == PromptStatus.Cancel)
+                {
+                    if (picks.Count == 0)
+                    {
+                        error = "Выбор отменён";
+                        return false;
+                    }
+
+                    break;
+                }
+
+                var ids = Array.Empty<ObjectId>();
+                if (psr.Status == PromptStatus.OK && psr.Value != null)
+                {
+                    ids = psr.Value.GetObjectIds()
+                        .Where(id => !id.IsNull && id.IsValid && !id.IsErased)
+                        .Distinct()
+                        .ToArray();
+                }
+
+                // §19.18: пустой Enter (None) или 0 объектов — сразу конец выбора, без второго Enter.
+                if (psr.Status == PromptStatus.None || ids.Length == 0)
+                {
+                    if (picks.Count == 0)
+                    {
+                        error = "Не выбрано ни одного объекта таблицы";
+                        return false;
+                    }
+
+                    break;
+                }
+
+                if (psr.Status != PromptStatus.OK)
+                {
+                    if (picks.Count == 0)
+                    {
+                        error = "Выбор таблиц не выполнен";
+                        return false;
+                    }
+
+                    break;
+                }
+
+                picks.Add(ids);
+                SpecGridLog.WriteCommandLine(
+                    doc,
+                    $"[INFO] Выбрана таблица {picks.Count} (объектов={ids.Length})");
+                tableNum++;
+            }
+
+            if (picks.Count > 0)
+            {
+                SpecGridLog.WriteCommandLine(
+                    doc,
+                    $"[INFO] Всего выбрано таблиц: {picks.Count}. Начинаем обработку...");
+            }
+
+            return picks.Count > 0;
+        }
+
+        private static int WriteQtyInTransaction(
+            Transaction tr,
+            IReadOnlyDictionary<int, int> qtyByKey,
+            SpecGridLog log,
+            out int skipped)
+        {
+            skipped = 0;
+            if (qtyByKey == null || qtyByKey.Count == 0)
+            {
+                return 0;
+            }
+
+            var written = 0;
+            foreach (var scope in SpecGridSession.Scopes)
+            {
+                written += WriteQtyScope(tr, scope, qtyByKey, log, ref skipped);
+            }
+
+            return written;
+        }
+
+        private static int WriteQtyScope(
+            Transaction tr,
+            ScopeGridResult scope,
+            IReadOnlyDictionary<int, int> qtyByKey,
+            SpecGridLog log,
+            ref int skipped)
+        {
+            if (scope == null || !scope.Valid || scope.ColQty < 0)
+            {
+                return 0;
+            }
+
+            var btr = ResolveOwnerBlock(tr, scope);
+            if (btr == null)
+            {
+                return 0;
+            }
+
+            // Стиль/цвет/толщина линии — только из своей таблицы (scope 0, scope 1, …), не общий по всем pick.
+            var appearance = ResolveQtyTableTextAppearanceForScope(tr, scope);
+
+            var written = 0;
+            foreach (var key in scope.KeyToRowTopSub.Keys.OrderBy(k => k))
+            {
+                if (!qtyByKey.TryGetValue(key, out var qty))
+                {
+                    continue;
+                }
+
+                if (!scope.KeyToRowTopSub.TryGetValue(key, out var rowTop))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                var col = scope.ColQty;
+                if (rowTop < 0 || col < 0 || rowTop >= scope.GridYs.Count - 1 || col >= scope.GridXs.Count - 1)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                var point = ResolveQtyInsertPoint(scope, rowTop, col);
+                var text = qty.ToString(CultureInfo.InvariantCulture);
+                try
+                {
+                    UpsertQtyText(tr, btr, scope, rowTop, col, point, text, appearance, log, scope.ScopeIndex, key);
+                    scope.CellText[rowTop, col] = text;
+                    written++;
+                }
+                catch
+                {
+                    skipped++;
+                }
+            }
+
+            return written;
+        }
+
+        private static BlockTableRecord ResolveOwnerBlock(Transaction tr, ScopeGridResult scope)
+        {
+            if (!scope.OwnerBlockId.IsNull && scope.OwnerBlockId.IsValid)
+            {
+                return tr.GetObject(scope.OwnerBlockId, OpenMode.ForWrite, false) as BlockTableRecord;
+            }
+
+            return null;
+        }
+
+        private static void UpsertQtyText(
+            Transaction tr,
+            BlockTableRecord btr,
+            ScopeGridResult scope,
+            int row,
+            int col,
+            Point3d point,
+            string text,
+            QtyTableTextAppearance tableAppearance,
+            SpecGridLog log,
+            int scopeIndex,
+            int key)
+        {
+            var existing = FindQtyTextInCell(tr, scope, row, col);
+            if (existing is DBText db)
+            {
+                db.UpgradeOpen();
+                db.TextString = text;
+                ApplyQtyTableTextStyle(db, tableAppearance, point);
+                return;
+            }
+
+            if (existing is MText mt)
+            {
+                mt.UpgradeOpen();
+                mt.Contents = text;
+                mt.TextHeight = ResolveQtyTextHeight(tableAppearance);
+                mt.Location = point;
+                ApplyQtyTableTextStyle(mt, tableAppearance);
+                ApplyQtyCenterAlignmentForMText(mt, point);
+                return;
+            }
+
+            // §19.15: новый текст — стиль штатной колонки «Кол.» (слой + TextStyle), не примечания.
+            var dbText = new DBText
+            {
+                Position = point,
+                Height = ResolveQtyTextHeight(tableAppearance),
+                TextString = text,
+                Layer = tableAppearance.Found && !string.IsNullOrWhiteSpace(tableAppearance.Layer)
+                    ? tableAppearance.Layer
+                    : scope.GridLayer ?? "0"
+            };
+            ApplyQtyTableTextStyle(dbText, tableAppearance, point);
+            btr.AppendEntity(dbText);
+            tr.AddNewlyCreatedDBObject(dbText, true);
+        }
+
+        /// <summary>
+        /// Стиль «Кол.» для одной таблицы (scope 0, 1, …): цвет/линия/шрифт как у **основного текста таблицы** (NAME),
+        /// не как у сносок инженера в ячейке «Кол.».
+        /// </summary>
+        private static QtyTableTextAppearance ResolveQtyTableTextAppearanceForScope(Transaction tr, ScopeGridResult scope)
+        {
+            if (scope == null || !scope.Valid || scope.ColQty < 0)
+            {
+                return new QtyTableTextAppearance();
+            }
+
+            var samples = new List<QtyAppearanceSample>();
+            AppendQtyStyleSamplesFromQtyColumn(tr, scope, samples, headerOnly: true);
+            AppendQtyDigitStyleSamplesFromScope(tr, scope, samples);
+            if (samples.Count == 0)
+            {
+                AppendTableBodyStyleSamplesFromScope(tr, scope, samples);
+            }
+
+            if (samples.Count == 0)
+            {
+                AppendTableTextHeightFallbackSamples(tr, scope, samples);
+            }
+
+            return BuildQtyTableTextAppearanceFromSamples(samples);
+        }
+
+        private static double ResolveQtyTextHeight(QtyTableTextAppearance appearance)
+        {
+            if (appearance != null && appearance.HasTextHeight && appearance.TextHeight > 0)
+            {
+                return appearance.TextHeight;
+            }
+
+            return QtyTextHeightFallback;
+        }
+
+        /// <summary>Преобладающий TextStyle, слой, цвет, толщина линии по образцам одного scope.</summary>
+        private static QtyTableTextAppearance BuildQtyTableTextAppearanceFromSamples(List<QtyAppearanceSample> samples)
+        {
+            if (samples == null || samples.Count == 0)
+            {
+                return new QtyTableTextAppearance();
+            }
+
+            var styleGroup = samples
+                .GroupBy(s => (s.TextStyleId, s.Layer ?? string.Empty))
+                .OrderByDescending(g => g.Count())
+                .First();
+
+            var colorGroup = styleGroup
+                .GroupBy(s => s.ColorKey)
+                .OrderByDescending(g => g.Count())
+                .First()
+                .First();
+
+            var lineWeight = styleGroup
+                .GroupBy(s => s.LineWeight)
+                .OrderByDescending(g => g.Count())
+                .First()
+                .Key;
+
+            var heightGroup = samples
+                .Where(s => s.TextHeight > 0)
+                .GroupBy(s => s.TextHeight)
+                .OrderByDescending(g => g.Count())
+                .FirstOrDefault();
+
+            return new QtyTableTextAppearance
+            {
+                Found = true,
+                TextStyleId = styleGroup.Key.TextStyleId,
+                Layer = styleGroup.Key.Item2,
+                EntityColor = colorGroup.EntityColor,
+                HasEntityColor = colorGroup.HasEntityColor,
+                LineWeight = lineWeight,
+                TextHeight = heightGroup?.Key ?? 0,
+                HasTextHeight = heightGroup != null && heightGroup.Key > 0
+            };
+        }
+
+        private sealed class QtyAppearanceSample
+        {
+            public ObjectId TextStyleId = ObjectId.Null;
+            public string Layer;
+            public Color EntityColor = Color.FromColorIndex(ColorMethod.ByLayer, 256);
+            public bool HasEntityColor;
+            public LineWeight LineWeight = LineWeight.ByLayer;
+            public string ColorKey = string.Empty;
+            public double TextHeight;
+        }
+
+        /// <summary>Образцы стиля из штатного текста таблицы: «Наименование», «Марка» (слои основного содержимого).</summary>
+        private static void AppendTableBodyStyleSamplesFromScope(
+            Transaction tr,
+            ScopeGridResult scope,
+            List<QtyAppearanceSample> samples)
+        {
+            AppendTableBodyStyleFromColumn(tr, scope, scope.ColName, samples, requireNameText: true);
+            AppendTableBodyStyleFromColumn(tr, scope, scope.ColMark, samples, requireNameText: false);
+
+            if (samples.Count > 0)
+            {
+                return;
+            }
+
+            AppendTableBodyStyleFromColumn(tr, scope, scope.ColName, samples, requireNameText: true, allowAnyTableContentLayer: true);
+        }
+
+        private static void AppendTableBodyStyleFromColumn(
+            Transaction tr,
+            ScopeGridResult scope,
+            int col,
+            List<QtyAppearanceSample> samples,
+            bool requireNameText,
+            bool allowAnyTableContentLayer = false)
+        {
+            if (col < 0)
+            {
+                return;
+            }
+
+            foreach (var id in scope.PickedObjectIds)
+            {
+                Entity ent;
+                try
+                {
+                    ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (ent is not DBText and not MText)
+                {
+                    continue;
+                }
+
+                var pt = GetEntityTextPoint(ent);
+                if (!CellIndex.TryGetCellIndex(pt.X, pt.Y, scope.GridXs, scope.GridYs, out var row, out var cellCol)
+                    || cellCol != col
+                    || row < scope.RowDataStart)
+                {
+                    continue;
+                }
+
+                if (!PassesTableBodyLayerForQtyStyle(scope, ent.Layer, allowAnyTableContentLayer))
+                {
+                    continue;
+                }
+
+                var plain = GetEntityPlainText(ent);
+                if (requireNameText)
+                {
+                    if (!MTextPlainText.HasLetter(plain) || plain.Trim().Length < 4)
+                    {
+                        continue;
+                    }
+                }
+                else if (string.IsNullOrWhiteSpace(plain))
+                {
+                    continue;
+                }
+
+                samples.Add(CreateQtyAppearanceSample(ent));
+            }
+        }
+
+        /// <summary>Тексты в колонке «Кол.» (шапка и/или данные).</summary>
+        private static void AppendQtyStyleSamplesFromQtyColumn(
+            Transaction tr,
+            ScopeGridResult scope,
+            List<QtyAppearanceSample> samples,
+            bool headerOnly)
+        {
+            var colQty = scope.ColQty;
+            if (colQty < 0)
+            {
+                return;
+            }
+
+            foreach (var id in scope.PickedObjectIds)
+            {
+                Entity ent;
+                try
+                {
+                    ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (ent is not DBText and not MText)
+                {
+                    continue;
+                }
+
+                var pt = GetEntityTextPoint(ent);
+                if (!CellIndex.TryGetCellIndex(pt.X, pt.Y, scope.GridXs, scope.GridYs, out var row, out var col)
+                    || col != colQty)
+                {
+                    continue;
+                }
+
+                if (headerOnly && row > 1)
+                {
+                    continue;
+                }
+
+                if (!headerOnly && row < scope.RowDataStart)
+                {
+                    continue;
+                }
+
+                if (!PassesTableBodyLayerForQtyStyle(scope, ent.Layer, allowAnyTableContentLayer: headerOnly))
+                {
+                    continue;
+                }
+
+                if (!headerOnly && !IsLikelyQtyCellText(GetEntityPlainText(ent)))
+                {
+                    continue;
+                }
+
+                samples.Add(CreateQtyAppearanceSample(ent));
+            }
+        }
+
+        /// <summary>Запас: короткие цифры в «Кол.» только на слое основного текста (не сноска на чужом слое).</summary>
+        private static void AppendQtyDigitStyleSamplesFromScope(
+            Transaction tr,
+            ScopeGridResult scope,
+            List<QtyAppearanceSample> samples)
+        {
+            AppendQtyStyleSamplesFromQtyColumn(tr, scope, samples, headerOnly: false);
+        }
+
+        private static void AppendTableTextHeightFallbackSamples(
+            Transaction tr,
+            ScopeGridResult scope,
+            List<QtyAppearanceSample> samples)
+        {
+            foreach (var id in scope.PickedObjectIds)
+            {
+                Entity ent;
+                try
+                {
+                    ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (ent is not DBText and not MText)
+                {
+                    continue;
+                }
+
+                if (!PassesTableBodyLayerForQtyStyle(scope, ent.Layer, allowAnyTableContentLayer: true))
+                {
+                    continue;
+                }
+
+                var sample = CreateQtyAppearanceSample(ent);
+                if (sample.TextHeight > 0)
+                {
+                    samples.Add(sample);
+                }
+            }
+        }
+
+        /// <summary>Слой для образца стиля qty: PrimaryNameLayer / ExtraNameLayers, не пометки и не «левые» Allowed-слои.</summary>
+        private static bool PassesTableBodyLayerForQtyStyle(
+            ScopeGridResult scope,
+            string layer,
+            bool allowAnyTableContentLayer)
+        {
+            var l = layer ?? string.Empty;
+            if (IsExcludedAnnotationLayer(scope, l))
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(scope.PrimaryNameLayer))
+            {
+                if (string.Equals(l, scope.PrimaryNameLayer, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                if (scope.ExtraNameLayers.Contains(l))
+                {
+                    return true;
+                }
+
+                if (allowAnyTableContentLayer && IsTableContentLayer(scope, l))
+                {
+                    return true;
+                }
+
+                return false;
+            }
+
+            return IsTableContentLayer(scope, l);
+        }
+
+        private static QtyAppearanceSample CreateQtyAppearanceSample(Entity ent)
+        {
+            var sample = new QtyAppearanceSample();
+            if (ent is DBText db)
+            {
+                sample.TextStyleId = db.TextStyleId;
+                sample.Layer = db.Layer;
+                sample.EntityColor = db.Color;
+                sample.HasEntityColor = true;
+                sample.LineWeight = db.LineWeight;
+                sample.TextHeight = db.Height;
+            }
+            else if (ent is MText mt)
+            {
+                sample.TextStyleId = mt.TextStyleId;
+                sample.Layer = mt.Layer;
+                sample.EntityColor = mt.Color;
+                sample.HasEntityColor = true;
+                sample.LineWeight = mt.LineWeight;
+                sample.TextHeight = mt.TextHeight;
+            }
+
+            sample.ColorKey = sample.HasEntityColor
+                ? $"{sample.EntityColor.ColorMethod}:{sample.EntityColor.ColorIndex}"
+                : "bylayer";
+            return sample;
+        }
+
+        private static void CopyQtyAppearanceFromEntity(DBText source, QtyTableTextAppearance result)
+        {
+            result.Found = true;
+            result.TextStyleId = source.TextStyleId;
+            result.Layer = source.Layer;
+            result.EntityColor = source.Color;
+            result.HasEntityColor = true;
+            result.LineWeight = source.LineWeight;
+            if (source.Height > 0)
+            {
+                result.TextHeight = source.Height;
+                result.HasTextHeight = true;
+            }
+        }
+
+        /// <summary>§19.19: если в «Кол.» нет образца — стиль/цвет из колонки «Наименование» (основной текст).</summary>
+        private static void TryFillQtyAppearanceFromNameColumn(
+            Transaction tr,
+            ScopeGridResult scope,
+            QtyTableTextAppearance result)
+        {
+            if (scope.ColName < 0)
+            {
+                return;
+            }
+
+            DBText best = null;
+            var bestLen = 0;
+            foreach (var id in scope.PickedObjectIds)
+            {
+                if (tr.GetObject(id, OpenMode.ForRead, false) is not DBText db)
+                {
+                    continue;
+                }
+
+                var pt = GetEntityTextPoint(db);
+                if (!CellIndex.TryGetCellIndex(pt.X, pt.Y, scope.GridXs, scope.GridYs, out var row, out var col)
+                    || col != scope.ColName
+                    || row < scope.RowDataStart)
+                {
+                    continue;
+                }
+
+                if (IsExcludedAnnotationLayer(scope, db.Layer) || !IsTableContentLayer(scope, db.Layer))
+                {
+                    continue;
+                }
+
+                var plain = GetEntityPlainText(db);
+                if (!MTextPlainText.HasLetter(plain) || plain.Length < 8)
+                {
+                    continue;
+                }
+
+                if (best == null || plain.Length > bestLen)
+                {
+                    best = db;
+                    bestLen = plain.Length;
+                }
+            }
+
+            if (best == null)
+            {
+                return;
+            }
+
+            if (!result.Found)
+            {
+                CopyQtyAppearanceFromEntity(best, result);
+                return;
+            }
+
+            if (result.TextStyleId.IsNull && !best.TextStyleId.IsNull)
+            {
+                result.TextStyleId = best.TextStyleId;
+            }
+
+            if (!result.HasEntityColor)
+            {
+                result.EntityColor = best.Color;
+                result.HasEntityColor = true;
+            }
+
+            if (string.IsNullOrWhiteSpace(result.Layer))
+            {
+                result.Layer = best.Layer;
+            }
+
+            result.LineWeight = best.LineWeight;
+        }
+
+        private static void ApplyQtyTableTextStyle(DBText dbText, QtyTableTextAppearance appearance, Point3d point)
+        {
+            dbText.Height = ResolveQtyTextHeight(appearance);
+            if (appearance.Found)
+            {
+                if (!appearance.TextStyleId.IsNull)
+                {
+                    dbText.TextStyleId = appearance.TextStyleId;
+                }
+
+                if (!string.IsNullOrWhiteSpace(appearance.Layer))
+                {
+                    dbText.Layer = appearance.Layer;
+                }
+
+                dbText.LineWeight = appearance.LineWeight;
+                try
+                {
+                    // §19.19: явный цвет штатного текста, не «По слою» слоя с примечанием.
+                    dbText.Color = appearance.HasEntityColor
+                        ? appearance.EntityColor
+                        : Color.FromColorIndex(ColorMethod.ByLayer, 256);
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+            else
+            {
+                dbText.LineWeight = LineWeight.ByLayer;
+            }
+
+            ApplyQtyCenterAlignment(dbText, point);
+        }
+
+        private static void ApplyQtyTableTextStyle(MText mt, QtyTableTextAppearance appearance)
+        {
+            if (!appearance.Found)
+            {
+                return;
+            }
+
+            if (!appearance.TextStyleId.IsNull)
+            {
+                mt.TextStyleId = appearance.TextStyleId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(appearance.Layer))
+            {
+                mt.Layer = appearance.Layer;
+            }
+
+            mt.LineWeight = appearance.LineWeight;
+            try
+            {
+                mt.Color = appearance.HasEntityColor
+                    ? appearance.EntityColor
+                    : Color.FromColorIndex(ColorMethod.ByLayer, 256);
+            }
+            catch
+            {
+                // ignore
+            }
+        }
+
+        private static void ApplyQtyCenterAlignmentForMText(MText mt, Point3d point)
+        {
+            mt.Attachment = AttachmentPoint.MiddleCenter;
+            mt.Location = point;
+        }
+
+        private static bool IsPointInQtyColumn(Point3d pt, ScopeGridResult scope, int col)
+        {
+            if (col < 0 || col >= scope.GridXs.Count - 1 || scope.GridYs.Count < 2)
+            {
+                return false;
+            }
+
+            var xL = scope.GridXs[col] - CellIndex.CellIndexEps;
+            var xR = scope.GridXs[col + 1] + CellIndex.CellIndexEps;
+            if (pt.X < xL || pt.X > xR)
+            {
+                return false;
+            }
+
+            var yTop = scope.GridYs[scope.RowDataStart];
+            var yBottom = scope.GridYs[scope.GridYs.Count - 1];
+            var yLo = Math.Min(yTop, yBottom) - CellIndex.CellIndexEps;
+            var yHi = Math.Max(yTop, yBottom) + CellIndex.CellIndexEps;
+            return pt.Y >= yLo && pt.Y <= yHi;
+        }
+
+        private static List<int> CollectMissingQtyMarks(IReadOnlyDictionary<int, int> qtyByKey)
+        {
+            var missing = new HashSet<int>();
+            foreach (var scope in SpecGridSession.Scopes)
+            {
+                CollectMissingQtyMarksForScope(scope, qtyByKey, missing);
+            }
+
+            return missing.OrderBy(k => k).ToList();
+        }
+
+        private static void CollectMissingQtyMarksForScope(
+            ScopeGridResult scope,
+            IReadOnlyDictionary<int, int> qtyByKey,
+            HashSet<int> missing)
+        {
+            if (scope == null || !scope.Valid)
+            {
+                return;
+            }
+
+            foreach (var key in scope.KeyToRowMark.Keys)
+            {
+                if (qtyByKey == null || !qtyByKey.ContainsKey(key))
+                {
+                    missing.Add(key);
+                }
+            }
+        }
+
+        private static Point3d ResolveQtyInsertPoint(ScopeGridResult scope, int rowTop, int colQty)
+        {
+            var y = (scope.GridYs[rowTop] + scope.GridYs[rowTop + 1]) * 0.5;
+            var x = ResolveVisualQtyColumnCenterX(scope, colQty);
+            return new Point3d(x, y, 0);
+        }
+
+        private static double ResolveVisualQtyColumnCenterX(ScopeGridResult scope, int colQty)
+        {
+            if (colQty < 0 || colQty >= scope.GridXs.Count - 1)
+            {
+                return 0;
+            }
+
+            var gridCenter = (scope.GridXs[colQty] + scope.GridXs[colQty + 1]) * 0.5;
+            // Центрирование «Кол.» должно быть строго по геометрическим границам ячейки сетки,
+            // а не по координатам Location MText (Justify Top left смещает t.X).
+            return gridCenter;
+        }
+
+        private static void ReportGridBuildWarnings(Document doc, IReadOnlyList<ScopeGridResult> scopes)
+        {
+            if (doc == null || scopes == null)
+            {
+                return;
+            }
+
+            foreach (var scope in scopes)
+            {
+                if (scope == null)
+                {
+                    continue;
+                }
+
+                if (scope.GridAxesMergedFromMixedLayers
+                    && !string.IsNullOrWhiteSpace(scope.GridMergeLayerNote))
+                {
+                    SpecGridLog.WriteCommandLine(
+                        doc,
+                        $"[POSC] Сетка таблицы: линии на разных слоях — оси дополнены ({scope.GridMergeLayerNote}).");
+                }
+
+                if (!scope.Valid)
+                {
+                    SpecGridLog.WriteCommandLine(
+                        doc,
+                        "[POSC] Не удалось построить сетку таблицы — проверьте линии в рамке выбора.");
+                }
+            }
+        }
+
+        private static void ReportEmptyMarkColumnWarnings(Document doc, IReadOnlyList<ScopeGridResult> scopes)
+        {
+            if (doc == null || scopes == null)
+            {
+                return;
+            }
+
+            foreach (var scope in scopes)
+            {
+                if (scope == null || !scope.Valid || scope.ColMark < 0)
+                {
+                    continue;
+                }
+
+                if (scope.KeyToRowMark.Count == 0)
+                {
+                    SpecGridLog.WriteCommandLine(
+                        doc,
+                        "[POSC] Заполните колонку «Марка» (Поз.) в таблице — иначе «Кол.» не запишется.");
+                    var markCounts = TableGridBuilder.FormatDataMarkCountsDiagnostic(scope);
+                    if (!string.IsNullOrWhiteSpace(markCounts))
+                    {
+                        SpecGridLog.WriteCommandLine(
+                            doc,
+                            $"[POSC] Марок в данных (как BindKeys) по столбцам: {markCounts} (ColMark={scope.ColMark})");
+                    }
+                }
+            }
+        }
+
+        /// <summary>§19.16: марка в таблице есть, в палитре количества нет — только CMD, без Enter.</summary>
+        private static void ReportMissingQtyMarks(Document doc, List<int> missingMarks)
+        {
+            if (missingMarks == null || missingMarks.Count == 0)
+            {
+                return;
+            }
+
+            var list = string.Join(", ", missingMarks);
+            var msg = $"[POSC] Количество не найдено в палитре для марок: {list}";
+            SpecGridLog.WriteCommandLine(doc, msg);
+        }
+
+        /// <summary>§7.1.3: только штатное количество (короткие цифры), не примечания инженера.</summary>
+        private static Entity FindQtyTextInCell(Transaction tr, ScopeGridResult scope, int row, int col)
+        {
+            Entity best = null;
+            var bestScore = -1;
+            foreach (var id in scope.PickedObjectIds)
+            {
+                Entity ent;
+                try
+                {
+                    ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (ent == null || !(ent is DBText || ent is MText))
+                {
+                    continue;
+                }
+
+                if (!IsPointInCell(GetEntityTextPoint(ent), scope, row, col))
+                {
+                    continue;
+                }
+
+                if (IsExcludedAnnotationLayer(scope, ent.Layer))
+                {
+                    continue;
+                }
+
+                if (!PassesTableBodyLayerForQtyStyle(scope, ent.Layer, allowAnyTableContentLayer: false))
+                {
+                    continue;
+                }
+
+                var plain = GetEntityPlainText(ent);
+                if (!IsLikelyQtyCellText(plain))
+                {
+                    continue;
+                }
+
+                var score = plain.Trim().Length;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = ent;
+                }
+            }
+
+            return best;
+        }
+
+        private static string GetEntityPlainText(Entity ent)
+        {
+            if (ent is DBText db)
+            {
+                return MTextPlainText.SanitizeRawContents(db.TextString ?? string.Empty);
+            }
+
+            if (ent is MText mt)
+            {
+                return MTextPlainText.SanitizeRawContents(mt.Contents ?? string.Empty);
+            }
+
+            return string.Empty;
+        }
+
+        /// <summary>Короткое число количества; не примечание с буквами.</summary>
+        private static bool IsLikelyQtyCellText(string plain)
+        {
+            if (string.IsNullOrWhiteSpace(plain))
+            {
+                return false;
+            }
+
+            var s = plain.Trim();
+            if (s.Length > 10)
+            {
+                return false;
+            }
+
+            if (MTextPlainText.HasLetter(s))
+            {
+                return false;
+            }
+
+            var digits = 0;
+            foreach (var c in s)
+            {
+                if (char.IsDigit(c))
+                {
+                    digits++;
+                }
+                else if (c != ' ' && c != '.' && c != ',')
+                {
+                    return false;
+                }
+            }
+
+            return digits > 0 && int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) && v >= 0 && v <= 100000;
+        }
+
+        private static bool IsExcludedAnnotationLayer(ScopeGridResult scope, string layer)
+        {
+            if (scope.ExcludedAnnotationLayers.Count == 0)
+            {
+                return false;
+            }
+
+            return scope.ExcludedAnnotationLayers.Contains(layer ?? string.Empty);
+        }
+
+        private static bool IsTableContentLayer(ScopeGridResult scope, string layer)
+        {
+            if (scope.AllowedTableTextLayers.Count == 0)
+            {
+                return true;
+            }
+
+            return scope.AllowedTableTextLayers.Contains(layer ?? string.Empty);
+        }
+
+        private static bool IsPointInCell(Point3d pt, ScopeGridResult scope, int row, int col)
+        {
+            if (col < 0 || row < 0 || col >= scope.GridXs.Count - 1 || row >= scope.GridYs.Count - 1)
+            {
+                return false;
+            }
+
+            var xL = scope.GridXs[col] - CellIndex.CellIndexEps;
+            var xR = scope.GridXs[col + 1] + CellIndex.CellIndexEps;
+            var yA = scope.GridYs[row];
+            var yB = scope.GridYs[row + 1];
+            var yLo = Math.Min(yA, yB) - CellIndex.CellIndexEps;
+            var yHi = Math.Max(yA, yB) + CellIndex.CellIndexEps;
+            return pt.X >= xL && pt.X <= xR && pt.Y >= yLo && pt.Y <= yHi;
+        }
+
+        private static Point3d GetEntityTextPoint(Entity ent)
+        {
+            if (ent is DBText db)
+            {
+                try
+                {
+                    if (db.AlignmentPoint != Point3d.Origin)
+                    {
+                        return db.AlignmentPoint;
+                    }
+                }
+                catch
+                {
+                    // ignore
+                }
+
+                return db.Position;
+            }
+
+            if (ent is MText mt)
+            {
+                return mt.Location;
+            }
+
+            return Point3d.Origin;
+        }
+
+        public static void ApplyQtyCenterAlignment(DBText dbText, Point3d point)
+        {
+            dbText.HorizontalMode = TextHorizontalMode.TextCenter;
+            dbText.VerticalMode = TextVerticalMode.TextVerticalMid;
+            dbText.AlignmentPoint = point;
+            dbText.Position = point;
+            try
+            {
+                dbText.AdjustAlignment(dbText.Database);
+            }
+            catch
+            {
+                // ignore
+            }
+        }
+
+    }
+}
