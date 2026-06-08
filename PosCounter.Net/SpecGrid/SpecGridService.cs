@@ -415,11 +415,12 @@ namespace PosCounter.Net.SpecGrid
                     continue;
                 }
 
-                var point = ResolveQtyInsertPoint(scope, rowTop, col);
+                var rowBottomEx = ResolveQtyCellRowBottomExByColQtyGrid(scope, rowTop, col, key);
+                var point = ResolveQtyInsertPoint(scope, rowTop, rowBottomEx, col);
                 var text = qty.ToString(CultureInfo.InvariantCulture);
                 try
                 {
-                    UpsertQtyText(tr, btr, scope, rowTop, col, point, text, appearance, log, scope.ScopeIndex, key);
+                    UpsertQtyText(tr, btr, scope, rowTop, rowBottomEx, col, point, text, appearance, log, scope.ScopeIndex, key);
                     scope.CellText[rowTop, col] = text;
                     written++;
                 }
@@ -446,7 +447,8 @@ namespace PosCounter.Net.SpecGrid
             Transaction tr,
             BlockTableRecord btr,
             ScopeGridResult scope,
-            int row,
+            int rowTop,
+            int rowBottomEx,
             int col,
             Point3d point,
             string text,
@@ -455,7 +457,7 @@ namespace PosCounter.Net.SpecGrid
             int scopeIndex,
             int key)
         {
-            var existing = FindQtyTextInCell(tr, scope, row, col);
+            var existing = FindQtyTextInCell(tr, scope, rowTop, rowBottomEx, col, point.Y);
             if (existing is DBText db)
             {
                 db.UpgradeOpen();
@@ -1041,9 +1043,75 @@ namespace PosCounter.Net.SpecGrid
             }
         }
 
-        private static Point3d ResolveQtyInsertPoint(ScopeGridResult scope, int rowTop, int colQty)
+        /// <summary>Нижняя граница ячейки «Кол.» (exclusive) по H-линиям в полосе X ColQty; не KeyToMarkBlockEnd.</summary>
+        private static int ResolveQtyCellRowBottomExByColQtyGrid(ScopeGridResult scope, int rowTop, int colQty, int key)
         {
-            var y = (scope.GridYs[rowTop] + scope.GridYs[rowTop + 1]) * 0.5;
+            var fallback = rowTop + 1;
+            if (scope?.GridYs == null || scope.GridYs.Count < 2)
+            {
+                return fallback;
+            }
+
+            if (rowTop < 0 || rowTop >= scope.GridYs.Count - 1)
+            {
+                return fallback;
+            }
+
+            if (colQty < 0 || colQty >= scope.GridXs.Count - 1)
+            {
+                return fallback;
+            }
+
+            var horiz = scope.HorizontalLines;
+            if (horiz == null || horiz.Count == 0)
+            {
+                return fallback;
+            }
+
+            var xL = scope.GridXs[colQty];
+            var xR = scope.GridXs[colQty + 1];
+            var rowBottomEx = rowTop + 1;
+            while (rowBottomEx < scope.GridYs.Count - 1)
+            {
+                if (TableGridBuilder.HasHBorderAt(
+                        scope.GridYs[rowBottomEx],
+                        xL,
+                        xR,
+                        horiz,
+                        borderEps: TableGridBuilder.EpsAxis * 3.0))
+                {
+                    break;
+                }
+
+                rowBottomEx++;
+            }
+
+            rowBottomEx = Math.Min(rowBottomEx, ResolveNextKeyRowTopEx(scope, key));
+            rowBottomEx = Math.Min(rowBottomEx, scope.GridYs.Count - 1);
+            return rowBottomEx <= rowTop ? fallback : rowBottomEx;
+        }
+
+        private static int ResolveNextKeyRowTopEx(ScopeGridResult scope, int key)
+        {
+            if (scope?.KeyToRowTopSub == null || scope.GridYs == null || scope.GridYs.Count < 2)
+            {
+                return scope?.GridYs?.Count - 1 ?? 1;
+            }
+
+            foreach (var kv in scope.KeyToRowTopSub.OrderBy(x => x.Key))
+            {
+                if (kv.Key > key)
+                {
+                    return kv.Value;
+                }
+            }
+
+            return scope.GridYs.Count - 1;
+        }
+
+        private static Point3d ResolveQtyInsertPoint(ScopeGridResult scope, int rowTop, int rowBottomEx, int colQty)
+        {
+            var y = (scope.GridYs[rowTop] + scope.GridYs[rowBottomEx]) * 0.5;
             var x = ResolveVisualQtyColumnCenterX(scope, colQty);
             return new Point3d(x, y, 0);
         }
@@ -1136,10 +1204,18 @@ namespace PosCounter.Net.SpecGrid
         }
 
         /// <summary>§7.1.3: только штатное количество (короткие цифры), не примечания инженера.</summary>
-        private static Entity FindQtyTextInCell(Transaction tr, ScopeGridResult scope, int row, int col)
+        private static Entity FindQtyTextInCell(
+            Transaction tr,
+            ScopeGridResult scope,
+            int rowTop,
+            int rowBottomEx,
+            int col,
+            double targetCenterY)
         {
+            var mergedSpan = rowBottomEx > rowTop + 1;
             Entity best = null;
             var bestScore = -1;
+            var bestDist = double.MaxValue;
             foreach (var id in scope.PickedObjectIds)
             {
                 Entity ent;
@@ -1157,7 +1233,15 @@ namespace PosCounter.Net.SpecGrid
                     continue;
                 }
 
-                if (!IsPointInCell(GetEntityTextPoint(ent), scope, row, col))
+                var pt = GetEntityTextPoint(ent);
+                if (mergedSpan)
+                {
+                    if (!IsPointInQtyCellSpan(pt, scope, rowTop, rowBottomEx, col))
+                    {
+                        continue;
+                    }
+                }
+                else if (!IsPointInCell(pt, scope, rowTop, col))
                 {
                     continue;
                 }
@@ -1178,11 +1262,23 @@ namespace PosCounter.Net.SpecGrid
                     continue;
                 }
 
-                var score = plain.Trim().Length;
-                if (score > bestScore)
+                if (mergedSpan)
                 {
-                    bestScore = score;
-                    best = ent;
+                    var dist = Math.Abs(pt.Y - targetCenterY);
+                    if (dist < bestDist)
+                    {
+                        bestDist = dist;
+                        best = ent;
+                    }
+                }
+                else
+                {
+                    var score = plain.Trim().Length;
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        best = ent;
+                    }
                 }
             }
 
@@ -1272,6 +1368,34 @@ namespace PosCounter.Net.SpecGrid
             var yB = scope.GridYs[row + 1];
             var yLo = Math.Min(yA, yB) - CellIndex.CellIndexEps;
             var yHi = Math.Max(yA, yB) + CellIndex.CellIndexEps;
+            return pt.X >= xL && pt.X <= xR && pt.Y >= yLo && pt.Y <= yHi;
+        }
+
+        private static bool IsPointInQtyCellSpan(
+            Point3d pt,
+            ScopeGridResult scope,
+            int rowTop,
+            int rowBottomEx,
+            int col)
+        {
+            if (scope?.GridYs == null || scope.GridXs == null || scope.GridYs.Count < 2)
+            {
+                return false;
+            }
+
+            if (col < 0 || rowTop < 0 || col >= scope.GridXs.Count - 1 || rowTop >= scope.GridYs.Count - 1)
+            {
+                return false;
+            }
+
+            rowBottomEx = Math.Min(Math.Max(rowBottomEx, rowTop + 1), scope.GridYs.Count - 1);
+
+            var xL = scope.GridXs[col] - CellIndex.CellIndexEps;
+            var xR = scope.GridXs[col + 1] + CellIndex.CellIndexEps;
+            var yTop = scope.GridYs[rowTop];
+            var yBottom = scope.GridYs[rowBottomEx];
+            var yLo = Math.Min(yTop, yBottom) - CellIndex.CellIndexEps;
+            var yHi = Math.Max(yTop, yBottom) + CellIndex.CellIndexEps;
             return pt.X >= xL && pt.X <= xR && pt.Y >= yLo && pt.Y <= yHi;
         }
 

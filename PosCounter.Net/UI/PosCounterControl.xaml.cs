@@ -376,6 +376,48 @@ namespace PosCounter.Net.UI
             PaletteHost.RequestSelectSpec();
         }
 
+        private void BtnReset_OnClick(object sender, RoutedEventArgs e)
+        {
+            ResetPaletteState();
+        }
+
+        private void ResetPaletteState()
+        {
+            _isInternalUpdate = true;
+            try
+            {
+                _lastCountRows = new List<PosRow>();
+                _rowsAll = new ObservableCollection<PosRowVm>();
+                _lastMarkNames = new Dictionary<int, string>();
+
+                SpecGridSession.ClearScopes();
+
+                _filterText.Clear();
+                _filterName.Clear();
+                _filterCount.Clear();
+                _filterLayer.Clear();
+                TxtSearchText.Text = string.Empty;
+                TxtSearchName.Text = string.Empty;
+                TxtSearchCount.Text = string.Empty;
+                TxtSearchLayer.Text = string.Empty;
+
+                PopupFilterText.IsOpen = false;
+                PopupFilterName.IsOpen = false;
+                PopupFilterCount.IsOpen = false;
+                PopupFilterLayer.IsOpen = false;
+
+                InitGridView();
+                GridResults.UnselectAll();
+
+                Commands.ClearDrawingHighlight();
+                SetStatus("Сброшено. Нажмите ЗАПУСТИТЬ.");
+            }
+            finally
+            {
+                _isInternalUpdate = false;
+            }
+        }
+
         internal void ApplySpecResult(PaletteHost.SpecApplyPayload payload)
         {
             if (payload == null)

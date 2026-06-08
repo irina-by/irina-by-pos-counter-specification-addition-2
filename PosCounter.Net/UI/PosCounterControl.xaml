@@ -51,6 +51,7 @@
             <DockPanel LastChildFill="False">
                 <Button x:Name="BtnRun" Style="{StaticResource AppButtonStyle}" Content="ЗАПУСТИТЬ" Width="130" Click="BtnRun_OnClick"/>
                 <Button x:Name="BtnSelectSpec" Style="{StaticResource AppButtonStyle}" Content="Выбрать спецификацию" Margin="10,0,0,0" Padding="10,5" Click="BtnSelectSpec_OnClick"/>
+                <Button x:Name="BtnReset" Style="{StaticResource AppButtonStyle}" Content="Сброс" Margin="10,0,0,0" Background="#6C757D" Click="BtnReset_OnClick"/>
                 <Border Background="White" CornerRadius="32" Margin="16,0,0,0" Padding="12,5" BorderBrush="#DDDDDD" BorderThickness="1">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <CheckBox x:Name="ChkAllInModel" VerticalAlignment="Center" Checked="ChkAllInModel_OnChanged" Unchecked="ChkAllInModel_OnChanged"/>

@@ -362,6 +362,8 @@ namespace PosCounter.Net
             return false;
         }
 
+        internal static void ClearDrawingHighlight() => ClearTransientHighlight();
+
         private static void ClearTransientHighlight()
         {
             lock (_transientGate)

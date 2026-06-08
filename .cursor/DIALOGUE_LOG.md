@@ -76,3 +76,20 @@
 > Анализ: при mixed layers `MergeAxisClusters` переворачивал `GridYs` (возрастание вместо убывания) → `TryGetCellIndex` → Row=-1 для всех текстов.
 > Правка: `MergeAxisClusters(..., sortAsc)` — Y с `sortAsc:false`, X с `true`. Docs + plan `fix-grid-ys-merge-order.md`.
 > Результат: СБОРКА net8.0-windows OK, `dll 2026\PosCounter.Net.dll` обновлена; ручной тест 35NK — ожидает инженера (NETLOAD).
+
+> [2026-06-08] Задача: кнопка «Сброс» палитры — повторный цикл без NETLOAD.
+> Правка: `PosCounterControl.xaml` — `BtnReset`; `ResetPaletteState()` — очистка `_lastCountRows`, `_rowsAll`, `_lastMarkNames`, `SpecGridSession.ClearScopes()`, фильтров, `InitGridView()`; `Commands.ClearDrawingHighlight()`. Docs.
+> Результат: СБОРКА net8.0-windows OK (0 errors); `dll 2026` не перезаписана (файл занят) — NETLOAD из `bin\Release\net8.0-windows\PosCounter.Net.dll`; ручной тест — ЗАПУСТИТЬ → спецификация → Сброс → повтор без NETLOAD.
+
+> [2026-06-08] Задача: центрирование «Кол.» в ячейке при комментариях инженера (magenta, другой слой).
+> Правка: `SpecGridService.cs` — `ResolveQtyCellRowBottomEx`, Y по `KeyToMarkBlockEnd`; `IsPointInQtyCellSpan`, `FindQtyTextInCell` по span, tie-break ближайший к Y центру; фильтры слоя/`IsLikelyQtyCellText` без изменений. Docs.
+> Результат: СБОРКА net8.0-windows OK (0 errors); `dll 2026` не перезаписана (файл занят) — NETLOAD из `bin\Release\net8.0-windows\PosCounter.Net.dll`; ручной тест — ячейка с комментарием, qty по центру.
+
+> [2026-06-08] Задача: откат регрессии центрирования «Кол.» (план центр_ячейки_кол).
+> Причина: Y по `KeyToMarkBlockEnd` — span блока марки/имени, не ячейки ColQty; цифра уезжала из своей строки.
+> Правка: откат `ResolveQtyCellRowBottomEx`, `IsPointInQtyCellSpan`; Y снова `(GridYs[rowTop]+GridYs[rowTop+1])/2`; `FindQtyTextInCell` по одной строке, tie-break по длине текста. Docs.
+> Результат: СБОРКА net8.0-windows OK (0 errors), `dll 2026\PosCounter.Net.dll` обновлена; ручной тест — вставка ColQty как до плана.
+
+> [2026-06-08] Задача: центр «Кол.» при пометках инженера (span по сетке ColQty, план центр_colqty_по_сетке).
+> Правка: `SpecGridService.cs` — `ResolveQtyCellRowBottomExByColQtyGrid` (H-линии в полосе X ColQty + cap `ResolveNextKeyRowTopEx`); Y по span только при `rowBottomEx > rowTop+1`; `IsPointInQtyCellSpan` + tie-break по Y для merged; однострочные ячейки — как после отката. **`KeyToMarkBlockEnd` не используется.**
+> Результат: СБОРКА net8.0-windows OK (0 errors), `dll 2026\PosCounter.Net.dll` обновлена; grep — 0 использований `KeyToMarkBlockEnd`/`GetMarkBlockEndExclusive` (только комментарий); ручной тест — merged ColQty с пометкой и однострочные ячейки.

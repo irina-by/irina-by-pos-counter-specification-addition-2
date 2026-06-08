@@ -38,7 +38,8 @@
 
 1. **ЗАПУСТИТЬ** — `PosCounterEngine` (LOCK).
 2. **Выбрать спецификацию** — N рамок, `SpecGridSession.Scopes`, writeback **Кол.** из видимых qty.
-3. **Экспорт** (низ палитры) — `ExportService`, не CellText таблицы.
+3. **Сброс** — очистка in-memory сессии без `NETLOAD`: `_lastCountRows`, `_rowsAll`, `_lastMarkNames`, `SpecGridSession.ClearScopes()`, фильтры палитры, таблица и индикаторы; подсветка на чертеже — `Commands.ClearDrawingHighlight()`. Настройка «Все объекты в модели» не сбрасывается.
+4. **Экспорт** (низ палитры) — `ExportService`, не CellText таблицы.
 
 ## Логи
 
@@ -48,7 +49,9 @@
 
 - `TableGridBuilder.BuildMergedGridAxes` — доминирующий слой (≥30%) + виртуальное дополнение осей X/Y с других слоёв (`GridAxesMergedFromMixedLayers`, `GridMergeLayerNote`).
 - `GridLineSeg.SegmentLength`, `Y1/Y2` — вертикали участвуют в `AutoDetectGridLayer` / `IsGridCandidate`.
-- `SpecGridService.ResolveQtyInsertPoint` — Y по `GridYs[rowTop]`; X по геометрическому центру ячейки сетки (`gridCenter`), чтобы «Кол.» оставалась визуально центрирована.
+- `SpecGridService.ResolveQtyCellRowBottomExByColQtyGrid` — нижняя граница ячейки «Кол.» (exclusive) по H-линиям в полосе X ColQty (`HasHBorderAt` + `scope.HorizontalLines`); потолок — `ResolveNextKeyRowTopEx` (верх следующей марки), **не** `KeyToMarkBlockEnd`.
+- `SpecGridService.ResolveQtyInsertPoint` — Y = `(GridYs[rowTop] + GridYs[rowBottomEx]) / 2`; при однострочной ColQty (`rowBottomEx == rowTop+1`) поведение как после отката; X по геометрическому центру ячейки (`gridCenter`).
+- `FindQtyTextInCell` — при merged ColQty (`rowBottomEx > rowTop+1`): `IsPointInQtyCellSpan` + tie-break ближайший к Y центру; иначе одна строка + tie-break по длине текста.
 - `QtyTableTextAppearance.TextHeight` — из ColQty → тело таблицы; fallback `QtyTextHeightFallback = 2.5`.
 - CMD: `ReportGridBuildWarnings`, `ReportEmptyMarkColumnWarnings`.
 
