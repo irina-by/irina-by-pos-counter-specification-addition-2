@@ -2,7 +2,7 @@
 
 **Версия:** 4.2.0-table-grid-lines  
 **Сборки:** `dll 2016` (net46), `dll 2026` (net8.0-windows)  
-**Дата актуализации:** 2026-06-09
+**Дата актуализации:** 2026-06-09 (grid scan шапки, ResolveNameForKey, fix row1, native Table)
 
 ---
 
@@ -116,8 +116,10 @@ PosCounter.Net/
 | `MarkNamePairs` | key → итоговое имя |
 | `PrimaryNameLayer`, `ExtraNameLayers` | слои ColName |
 | `AllowedTableTextLayers`, `ExcludedAnnotationLayers` | фильтр слоёв |
-| `HeaderTopBandLo/Hi`, `HeaderDetectedByTopTextBand` | шапка по текстам |
+| `HeaderTopBandLo/Hi`, `HeaderDetectedByTopTextBand` | шапка по текстам (fallback) |
 | `TextsByRow` | кэш ColName по Row (pass-2) |
+| `IsNativeAcadTable`, `NativeTableId` | явная AutoCAD Table |
+| `MixedTableLineSelection` | Table+Line в одной рамке → LINE path |
 
 ---
 
@@ -171,22 +173,23 @@ PosCounter.Net/
 5. `AssignCellsHeader` — Row/Col по HeaderX/Y.
 6. `BuildCellMatrix(filterTableLayers: false)`.
 7. `EstimateHeaderEndRow(filteredH)`.
-8. `DetectHeader` → `DetectHeaderByTopTextBand` или fallback `DetectHeaderByColumns`.
-9. `ComputeRowDataStart(horiz: null)`.
-10. `BuildPrimaryNameLayer`, `BuildTableContentLayers`.
-11. `MedianRowStep`, `PrimaryNameTextHeight`.
+8. **`ApplyHeaderBoundaryFromGridScan`** — первая data-строка по скану CellText (марка / наименование+qty).
+9. `DetectHeader` → **`DetectHeaderByGridRows`** → fallback `DetectHeaderByColumns` → last-resort top-band.
+10. `ComputeRowDataStart(horiz: null)` — `searchFrom` из grid scan (`RowDataStart`), **без** принудительного min row 2; `ClampRowDataStartToGridScan`.
+11. `BuildPrimaryNameLayer`, `BuildTableContentLayers`.
+12. `MedianRowStep`, `PrimaryNameTextHeight`.
 
 ### Фаза C — pass 2 (данные + KV)
 
-12. `AssignCellsData` — Row по точке DataX/Y; DominantRow.
-13. `SplitNameColumnRowsData` — разнос NAME по строкам (DataY).
-14. `BuildTextsByRow`.
-15. `BuildCellMatrix(filterTableLayers: true)`.
-16. `ComputeRowDataStart(filteredH)`.
-17. **`BindKeysFromProperties`** — ключ.
-18. `BindKeys` — границы блоков.
-19. `AlignRowDataStartToFirstMark`.
-20. **`FillMarkNamesFromMergeGroups`** — значение.
+13. `AssignCellsData` — Row по точке DataX/Y; DominantRow.
+14. `SplitNameColumnRowsData` — разнос NAME по строкам (DataY).
+15. `BuildTextsByRow`.
+16. `BuildCellMatrix(filterTableLayers: true)`.
+17. `ComputeRowDataStart(filteredH)`.
+18. **`BindKeysFromProperties`** — ключ.
+19. `BindKeys` — границы блоков.
+20. `AlignRowDataStartToFirstMark`.
+21. **`FillMarkNamesFromMergeGroups`** — значение.
 
 ---
 
@@ -205,13 +208,15 @@ PosCounter.Net/
 | `SanitizeColQtyColumn` | ColQty похож на «Масса» | repick ColQty по qtyScores |
 | `EnsureUniqueHeaderColumns` | после detect | уникальные роли столбцов |
 | `RefineColMarkByDataMarks` | ColMark < 2 марок в data | смена ColMark по цифрам |
-| `BuildHeaderOnlyColumnText` | диагностика / sanitize | только строки `r < RowDataStart` |
+| `FindFirstDataRowAfterHeaderBoundary` | fallback searchFrom | `ResolveHeaderEndRow` или H-line; **без** min row 2 |
+| `ComputeRowDataStart` | после DetectHeader | `searchFrom = RowDataStart` из grid scan; `ClampRowDataStartToGridScan` |
+| `FormatMissingKeyOneDiagnostic` | CMD | марка 1 в CellText, но не в KeyToRowMark |
 
 ### Fallback
 
 | Метод | Когда |
 |-------|-------|
-| `DetectHeaderByColumns` | ColMark<0 или ColQty<0 после top band |
+| `DetectHeaderByColumns` | ColMark<0 или ColQty<0 после grid rows |
 | `CollectHeaderTextForColumn` | проходы A (Row/Col), B (geom), C (CellText) |
 | `PickBestHeaderColumn` | score ≥ MinHeaderScore(10) |
 
@@ -355,7 +360,8 @@ PosCounter.Net/
 | `ResolveQtyInsertPoint` | центр X/Y ячейки |
 | `FindQtyTextInCell` | найти существующий qty-текст |
 | `ResolveQtyTableTextAppearanceForScope` | стиль из ColQty → body → 2.5 |
-| `UpsertQtyText` | update/create DBText |
+| `UpsertQtyText` | update/create DBText (LINE path) |
+| `UpsertQtyInAcadTable` | update native Table cell (число в «N шт.») |
 
 **Не пишет:** наименование, примечания инженера (намеренно сохраняются при update).
 
@@ -366,6 +372,11 @@ PosCounter.Net/
 | Тег | Источник |
 |-----|----------|
 | `[POSC] Распознана шапка…` | ReportDetectedHeader |
+| `[POSC] Граница шапки/данных…` | ReportDetectedHeader |
+| `[POSC] KeyToRowMark` / `[POSC] Марок в данных…` | ReportDetectedHeader |
+| `[POSC] Марка 1 в CellText…` | FormatMissingKeyOneDiagnostic |
+| `[NAME-DEDUPE]` | ResolveNameForKey cell-only / collapse |
+| `[KV-ANCHOR]` | ResolveNameForKey fallback |
 | `[POSC] Марка: наложение…` | BindKeysFromProperties |
 | `[POSC] Сетка таблицы: линии на разных слоях…` | Grid merge |
 | `[KV-PAIR] key= value=` | FillMarkNames |
@@ -404,7 +415,8 @@ PosCounter.Net/
 1. NETLOAD → палитра автоматически.
 2. ЗАПУСТИТЬ → марки/количества.
 3. Выбрать спецификацию → имена + «Кол.» на DWG.
-4. `_tex_fek`: марки 4/5 (owner), 52 (multi-line), 6–9 (не пусто), шапка H1–H4.
+4. `_tex_fek`: марки 4/5 (owner), 52 (multi-line), 6–9 (не пусто), mark 64 (без дубля имени).
+5. **Ушко:** `RowDataStart=1`, `KeyToRowMark: 1→row1`, ColQty = «Кол.».
 
 ---
 

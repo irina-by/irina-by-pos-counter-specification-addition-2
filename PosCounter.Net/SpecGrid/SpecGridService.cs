@@ -189,6 +189,12 @@ namespace PosCounter.Net.SpecGrid
                             scope.KeyToRowMark.OrderBy(x => x.Key).Select(x => $"{x.Key}→row{x.Value}"));
                         SpecGridLog.WriteCommandLine(doc, $"[POSC] KeyToRowMark: {keyMap}");
                     }
+
+                    var missingKey1 = TableGridBuilder.FormatMissingKeyOneDiagnostic(scope);
+                    if (!string.IsNullOrWhiteSpace(missingKey1))
+                    {
+                        SpecGridLog.WriteCommandLine(doc, missingKey1);
+                    }
                 }
 
                 if (!scope.Valid)

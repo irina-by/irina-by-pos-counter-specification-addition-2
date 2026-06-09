@@ -145,3 +145,12 @@
 > [2026-06-09] Задача: план unified_grid_header_scan — откат деления «малая/большая таблица» (35% vs 2000 мм).
 > Правка: `ApplyHeaderBoundaryFromGridScan`, `FindFirstDataRowByGridScan`, `DetectHeaderByGridRows` (primary); `DetectHeader` порядок grid→columns→top-band; удалён `SmallTableHeaderBandFraction`; top-band fallback с фильтром `Row < HeaderEndRow`; CMD `[POSC] Граница шапки/данных`. Docs.
 > Результат: СБОРКА net8.0-windows OK (0 errors), `dll 2026\PosCounter.Net.dll` обновлена; ручной тест — Ушко, _tex_fek mark 64, 35NK (NETLOAD).
+
+> [2026-06-09] Задача: план fix_row1_mark_skip — марка 1 пропускается (данные с row 2).
+> Причина: `FindFirstDataRowAfterHeaderBoundary` и `ComputeRowDataStart` принудительно `searchFrom≥2`, перезаписывали grid scan `RowDataStart=1`.
+> Правка: default `searchFrom=HeaderEndRow`; убран min row 2; `ComputeRowDataStart` уважает grid scan + `ClampRowDataStartToGridScan`; `EstimateHeaderEndRow` minRow=0; CMD `FormatMissingKeyOneDiagnostic`. Docs.
+> Результат: СБОРКА net8.0-windows OK (0 errors), `dll 2026\PosCounter.Net.dll` обновлена; ручной тест — Ушко key=1 row=1 (NETLOAD).
+
+> [2026-06-09] Задача: актуализация документации — factual_program_architecture + README + DEVELOPER + INSTRUCTION_ENGINEER + Работа программы.
+> Правка: обновлён `.cursor/plans/factual_program_architecture.plan.md` (grid scan, ResolveNameForKey, native Table, fix row1); удалены устаревшие plan/implementation файлы; синхронизированы README, DEVELOPER, INSTRUCTION_ENGINEER, Работа программы.md.
+> Результат: ДОКУМЕНТАЦИЯ — код не менялся.

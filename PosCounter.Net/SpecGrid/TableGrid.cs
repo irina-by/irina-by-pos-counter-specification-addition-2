@@ -581,8 +581,6 @@ namespace PosCounter.Net.SpecGrid
         private const int MaxHeaderBorderScanRow = 12;
         /// <summary>Верхняя полоса шапки по текстам (fallback CMD): от maxY вниз.</summary>
         private const double HeaderTopBandHeight = 2000.0;
-        /// <summary>Минимальная строка для эвристики «наименование-данные» при grid scan.</summary>
-        private const int GridScanNameDataMinRow = 2;
         /// <summary>CellText достаточен — не дублировать AllTexts pass.</summary>
         private const int CellTextOnlyNameMinLength = 20;
 
@@ -1277,6 +1275,28 @@ namespace PosCounter.Net.SpecGrid
             return $"[POSC] Столбец «Поз.» уточнён: {scope.ColMarkRefinedFrom} → {scope.ColMarkRefinedTo} (марок в данных: {counts})";
         }
 
+        internal static string FormatMissingKeyOneDiagnostic(ScopeGridResult scope)
+        {
+            if (scope?.CellText == null || scope.ColMark < 0 || scope.KeyToRowMark.ContainsKey(1))
+            {
+                return string.Empty;
+            }
+
+            var rows = scope.CellText.GetLength(0);
+            var scanFrom = scope.RowDataStart > 0 ? scope.RowDataStart : 0;
+            var scanTo = Math.Min(rows, scanFrom + 4);
+            for (var r = scanFrom; r < scanTo; r++)
+            {
+                var cell = scope.CellText[r, scope.ColMark] ?? string.Empty;
+                if (MTextPlainText.TryParseMarkKey(cell, out var key) && key == 1)
+                {
+                    return $"[POSC] Марка 1 в CellText row={r}, но KeyToRowMark не содержит key=1 (RowDataStart={scope.RowDataStart})";
+                }
+            }
+
+            return string.Empty;
+        }
+
         private static void DetectHeader(ScopeGridResult result, SpecGridLog log)
         {
             result.HeaderDetectedByTopTextBand = false;
@@ -1350,11 +1370,6 @@ namespace PosCounter.Net.SpecGrid
                 {
                     return true;
                 }
-            }
-
-            if (row < GridScanNameDataMinRow)
-            {
-                return false;
             }
 
             var hasNameData = false;
@@ -1756,8 +1771,7 @@ namespace PosCounter.Net.SpecGrid
         }
 
         /// <summary>
-        /// Первая строка данных: первая цифра марки в ColMark **после** границы шапки (LINE под строками 0–1).
-        /// Не жёсткая строка 2 — ищем по сетке и по марке.
+        /// Первая строка данных: первая цифра марки в ColMark после границы шапки (grid scan / H-lines).
         /// </summary>
         private static void ComputeRowDataStart(ScopeGridResult result, List<GridLineSeg> horiz, SpecGridLog log)
         {
@@ -1773,7 +1787,9 @@ namespace PosCounter.Net.SpecGrid
             }
 
             var isPass2 = horiz != null && horiz.Count > 0;
-            var searchFrom = FindFirstDataRowAfterHeaderBoundary(result, horiz);
+            var searchFrom = rowDataStartBefore > 0
+                ? rowDataStartBefore
+                : FindFirstDataRowAfterHeaderBoundary(result, horiz);
             log?.RowDataDiag(
                 $"[ROW-DATA] scope={result.ScopeIndex} {passLabel}: searchFrom={searchFrom} horiz={(horiz == null ? "null" : horiz.Count.ToString(CultureInfo.InvariantCulture))} RowDataStart_before={rowDataStartBefore}");
             LogMarkRowsAfterHeader(result, searchFrom, rows, passLabel, log);
@@ -1786,6 +1802,7 @@ namespace PosCounter.Net.SpecGrid
                     result.RowDataStart = r;
                     log?.RowDataDiag(
                         $"[ROW-DATA] scope={result.ScopeIndex} {passLabel}: HIT CellText row={r} key={key} → RowDataStart={r}");
+                    ClampRowDataStartToGridScan(result, rowDataStartBefore, passLabel, log);
                     RejectBadPass2RowDataStart(result, rowDataStartBefore, isPass2, searchFrom, passLabel, log);
                     LogRowDataStartChange(result, rowDataStartBefore, passLabel, log);
                     return;
@@ -1801,6 +1818,7 @@ namespace PosCounter.Net.SpecGrid
                 LogAllTextsMarkOnRow(result, textRow, passLabel, log);
                 log?.RowDataDiag(
                     $"[ROW-DATA] scope={result.ScopeIndex} {passLabel}: HIT AllTexts row={textRow} → RowDataStart={textRow}");
+                ClampRowDataStartToGridScan(result, rowDataStartBefore, passLabel, log);
                 RejectBadPass2RowDataStart(result, rowDataStartBefore, isPass2, searchFrom, passLabel, log);
                 LogRowDataStartChange(result, rowDataStartBefore, passLabel, log);
                 return;
@@ -1819,16 +1837,46 @@ namespace PosCounter.Net.SpecGrid
                 result.RowDataStart = r;
                 log?.RowDataDiag(
                     $"[ROW-DATA] scope={result.ScopeIndex} {passLabel}: HIT non-header text row={r} mark={DescribeMarkCellForLog(mark)} → RowDataStart={r}");
+                ClampRowDataStartToGridScan(result, rowDataStartBefore, passLabel, log);
                 RejectBadPass2RowDataStart(result, rowDataStartBefore, isPass2, searchFrom, passLabel, log);
                 LogRowDataStartChange(result, rowDataStartBefore, passLabel, log);
                 return;
             }
 
-            result.RowDataStart = Math.Min(searchFrom, rows - 1);
+            result.RowDataStart = rowDataStartBefore > 0 ? rowDataStartBefore : Math.Min(searchFrom, rows - 1);
             log?.RowDataDiag(
                 $"[ROW-DATA] scope={result.ScopeIndex} {passLabel}: FALLBACK RowDataStart={result.RowDataStart} (searchFrom={searchFrom}, марка не найдена)");
+            ClampRowDataStartToGridScan(result, rowDataStartBefore, passLabel, log);
             RejectBadPass2RowDataStart(result, rowDataStartBefore, isPass2, searchFrom, passLabel, log);
             LogRowDataStartChange(result, rowDataStartBefore, passLabel, log);
+        }
+
+        /// <summary>Не поднимать RowDataStart выше границы grid scan, если марка уже на более ранней строке.</summary>
+        private static void ClampRowDataStartToGridScan(
+            ScopeGridResult result,
+            int rowDataStartBefore,
+            string passLabel,
+            SpecGridLog log)
+        {
+            if (rowDataStartBefore <= 0 || result.RowDataStart <= rowDataStartBefore)
+            {
+                return;
+            }
+
+            if (result.ColMark < 0 || result.CellText == null || rowDataStartBefore >= result.CellText.GetLength(0))
+            {
+                return;
+            }
+
+            var mark = result.CellText[rowDataStartBefore, result.ColMark] ?? string.Empty;
+            if (!MTextPlainText.TryParseMarkKey(mark, out _))
+            {
+                return;
+            }
+
+            log?.Info(
+                $"TABLE-GRID: scope={result.ScopeIndex} {passLabel}: Clamp RowDataStart {result.RowDataStart} → {rowDataStartBefore} (grid scan mark at row {rowDataStartBefore})");
+            result.RowDataStart = rowDataStartBefore;
         }
 
         /// <summary>Pass2 не должен уводить RowDataStart в середину таблицы из-за внутренней LINE (searchFrom=9 и т.п.).</summary>
@@ -1969,7 +2017,7 @@ namespace PosCounter.Net.SpecGrid
             }
             else
             {
-                var markRow = FindFirstMarkRowFromCellText(result, minRow: 2);
+                var markRow = FindFirstMarkRowFromCellText(result, minRow: 0);
                 headerEndRow = markRow >= 0 ? markRow : Math.Min(6, rows - 1);
             }
 
@@ -2038,8 +2086,7 @@ namespace PosCounter.Net.SpecGrid
         }
 
         /// <summary>
-        /// Строка, с которой начинается поиск данных: сразу под первой H-линией шапки в ColMark
-        /// (типично: строки 0–1 — подписи, LINE, с r=2 — позиции). Без привязки к номеру марки.
+        /// Строка, с которой начинается поиск данных: HeaderEndRow (grid scan) или H-line под шапкой.
         /// </summary>
         private static int FindFirstDataRowAfterHeaderBoundary(ScopeGridResult result, List<GridLineSeg> horiz)
         {
@@ -2049,31 +2096,30 @@ namespace PosCounter.Net.SpecGrid
                 return 0;
             }
 
-            var searchFrom = Math.Min(2, rows - 1);
+            var searchFrom = ResolveHeaderEndRow(result);
+            if (searchFrom < 0)
+            {
+                searchFrom = 0;
+            }
+
             if (result.ColMark < 0 || result.GridXs.Count <= result.ColMark + 1 || result.GridYs.Count < 3)
             {
-                return searchFrom;
+                return Math.Min(searchFrom, rows - 1);
             }
 
             if (horiz == null || horiz.Count == 0)
             {
-                return searchFrom;
+                return Math.Min(searchFrom, rows - 1);
             }
 
             var xL = result.GridXs[result.ColMark];
             var xR = result.GridXs[result.ColMark + 1];
-            // Только полоса шапки (строки 1–4), не вся таблица — иначе lastBorderRow=9 и данные с r=10.
             const int headerBandMaxRow = 4;
             var lastBorderRow = FindHeaderBoundaryRow(result, horiz, xL, xR, headerBandMaxRow);
 
             if (lastBorderRow >= 0)
             {
-                searchFrom = lastBorderRow;
-            }
-
-            if (rows >= 4 && searchFrom < 2)
-            {
-                searchFrom = 2;
+                searchFrom = Math.Max(searchFrom, lastBorderRow);
             }
 
             return Math.Min(searchFrom, rows - 1);
