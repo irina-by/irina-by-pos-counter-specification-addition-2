@@ -116,4 +116,16 @@
 
 > [2026-06-09] Задача: dual-pass name collection — откат DominantRow gate, двухпроходный сбор (row overlap + vertical supplement).
 > Правка: `CollectNamePartsForPositionRange`, `CollectNamePartsFromNameCell`, `SupplementNamePartsInVerticalBand`; удалены TextBelongsToPrimaryRow, GetNameCandidatesInRow, ResolveNameTextsForRow, PickBestTextSampleForRow, CollectNamePartsFromProperties; [NAME-ROW]/[NAME-SUPPLEMENT]; шапка без изменений; docs.
-> Результат: СБОРКА net8.0-windows OK (0 errors); ручной тест _tex_fek (марки 52,6–9, шапка H1–H4) — ожидает инженера (NETLOAD).
+> Результат: СБОРКА net8.0-windows OK (0 errors); ручной тест _tex_fek (марки 52,6–9, шапка H1–H4) — **НЕ РАБОТАЕТ** — склейка foreign mark (4→5, 2→3), дубли spanning MText.
+
+> [2026-06-09] Задача: dual-pass owner mark fix — foreign bleed 4→5 без DominantRow gate.
+> Правка: `ResolveOwnerMarkKeyForNameText`, `NameTextBelongsToMarkKey` в pass 1/2; [NAME-FOREIGN-SKIP]; docs/DEVELOPER.md.
+> Результат: СБОРКА net8.0-windows OK (0 errors); ручной тест _tex_fek (марки 4,5,3,52,6–9, шапка) — ожидает инженера (NETLOAD).
+
+> [2026-06-09] Задача: полная документация по фактическому коду (без изменения кода).
+> Правка: `.cursor/plans/factual_program_architecture.plan.md` (факт-план); `docs/DEVELOPER.md` (методы, условия, dual-pass, owner mark); `README.md` (актуальная версия, диагностика CMD); `Работа программы.md` (Q&A простым языком: шапка, key/value, слои, «Кол.»).
+> Результат: ДОКУМЕНТАЦИЯ — код не менялся; описание соответствует коду на 2026-06-09.
+
+> [2026-06-09] Задача: упростить чтение `Работа программы.md`.
+> Правка: под каждый вопрос добавлен блок **«Проще»** (1–3 предложения); в конце раздел **«Кратко: как всё работает»** — пошагово шаг 1–3, схема key/value, два прохода имени, чеклист.
+> Результат: ДОКУМЕНТАЦИЯ — код не менялся.

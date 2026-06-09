@@ -1,179 +1,368 @@
-# TABLE-GRID-LINES v1 — заметки разработчика
+# PosCounter.Net — техническая документация (факт по коду)
 
-## Версия
+**Версия:** 4.2.0-table-grid-lines  
+**Сборки:** `dll 2016` (net46), `dll 2026` (net8.0-windows)  
+**Дата актуализации:** 2026-06-09
 
-- Сборка: `4.2.0-table-grid-lines`
-- DLL 2016–2024: `dll 2016/PosCounter.Net.dll` (`net46`)
-- DLL 2025+: `dll 2026/PosCounter.Net.dll` (`net8.0-windows`)
-- План: `.cursor/plans/etalon_verify_v1.md`
-- Сборка (подробно): **`docs/BUILD.md`**
+---
+
+## 1. Назначение программы
+
+AutoCAD-плагин из двух модулей:
+
+1. **Подсчёт выносок** — `PosCounterEngine`: TEXT/MTEXT/атрибуты → палитра (Марка, Количество, Слой).
+2. **Спецификация** — `TableGridBuilder` + `SpecGridService`: таблица из LINE → ключ (марка) + значение (наименование) → палитра; запись **только «Кол.»** на чертёж.
+
+Связь модулей: **номер марки (Key)**.
+
+---
+
+## 2. Структура проекта
+
+```
+PosCounter.Net/
+  Commands.cs              — NETLOAD, POSC, POSC2_* 
+  PaletteHost.cs           — палитра WPF, очереди команд
+  UI/PosCounterControl.*   — интерфейс палитры
+  Engine/PosCounterEngine.cs   — подсчёт (LOCK — не менять)
+  SpecGrid/
+    TableGrid.cs           — сетка, шапка, KV key/value
+    SpecGridService.cs     — pick, qty writeback
+    CellIndex.cs           — привязка к ячейкам
+    MTextPlainText.cs      — текст, марка, имя
+    SpecGridSession.cs     — сессия scope'ов
+    SpecGridLog.cs         — лог CMD
+  Services/ExportService.cs
+  Models/PosModels.cs, PosRow.cs
+  State/PosSettingsStore.cs
+```
+
+---
+
+## 3. Команды AutoCAD
+
+| Команда | Файл | Назначение |
+|---------|------|------------|
+| *(NETLOAD)* | `Commands.Initialize` | подписка Idle → авто-палитра |
+| `POSC` | `PosCounterCommand` | показать палитру |
+| `POSC2_RUN_INTERNAL` | `PosCounterRunInternal` | подсчёт → UI |
+| `POSC2_SPEC_INTERNAL` | `PosCounterSpecInternal` | spec + qty + имена |
+| `POSC2_HIGHLIGHT_INTERNAL` | `PosCounterHighlightInternal` | подсветка handles |
+
+Флаги служебных команд: `NoHistory | NoActionRecording | Session`.
+
+---
+
+## 4. Модуль подсчёта — `PosCounterEngine`
+
+**Ограничение:** PALETTE-COUNT-LOCK — не менять без отдельного ТЗ.
+
+### Публичные методы
+
+| Метод | Вход | Выход |
+|-------|------|-------|
+| `Count(countAllInModel)` | bool | `List<PosRow>` |
+| `CountWithInfo(countAllInModel, extractNumbersOnly)` | bool, bool | `PosCountResult` |
+
+### Условия источника данных
+
+| Условие | Поведение |
+|---------|-----------|
+| Есть pick-first / выделение | только выделенные объекты |
+| Галочка «Все объекты в модели» | ModelSpace или viewport polygon |
+| Иначе | пустой результат |
+
+### Ключевые внутренние шаги
+
+- `ProcessEntity` / `ProcessBlockReference` — рекурсия блоков.
+- `ProcessTextValue` → `ExtractPositionNumber` — марка 1..10000, приставки «Поз.» и т.д.
+- `Accumulator.Increment(layer, text)` — группировка количества.
+- `MTextPlainText.ResolveLayer` — слой объекта / блока.
+
+**Не обрабатывается:** MLeader, proxy СПДС.
+
+---
+
+## 5. Модуль спецификации — orchestration
+
+### `SpecGridService.RunSelectSpecification`
+
+1. `TryPickAllSpecificationTables` — N рамок.
+2. `TableGridBuilder.Build(i, ids, tr, sharedGridLayer, log)` для каждой.
+3. `MergeScopeNames` + `BuildCombinedMarkNames` → UI.
+4. `WriteQtyInTransaction` → `WriteQtyScope` → `UpsertQtyText`.
+
+### `SpecGridSession`
+
+- `Scopes` — список `ScopeGridResult`.
+- `SharedGridLayer` — общий слой сетки для 2+ таблиц на листе.
+
+---
+
+## 6. `ScopeGridResult` — поля состояния
+
+| Поле | Назначение |
+|------|------------|
+| `GridXs`, `GridYs` | оси сетки (Y сверху вниз) |
+| `ColMark`, `ColName`, `ColQty` | индексы столбцов (-1 = не найден) |
+| `HeaderEndRow` | exclusive граница шапки |
+| `RowDataStart`, `RowDataEnd` | диапазон строк данных |
+| `CellText[row,col]` | матрица текста ячеек |
+| `AllTexts` | все `TextSample` из рамки |
+| `KeyToRowMark` | key → строка марки |
+| `RowToKeyMark` | row → key |
+| `KeyToRowTopSub` | верх merged-блока марки |
+| `KeyToMarkBlockEnd` | низ блока марки (exclusive) |
+| `MarkNamePairs` | key → итоговое имя |
+| `PrimaryNameLayer`, `ExtraNameLayers` | слои ColName |
+| `AllowedTableTextLayers`, `ExcludedAnnotationLayers` | фильтр слоёв |
+| `HeaderTopBandLo/Hi`, `HeaderDetectedByTopTextBand` | шапка по текстам |
+| `TextsByRow` | кэш ColName по Row (pass-2) |
+
+---
+
+## 7. `TextSample` — координаты и pass'ы
+
+| Поле | Когда заполняется | Значение |
+|------|-------------------|----------|
+| `HeaderX`, `HeaderY` | pass-1 | центр GeometricExtents |
+| `DataX`, `DataY` | pass-2 | DBText: точка; MText: X=Location.X, **Y=YMax** |
+| `YMin`, `YMax` | оба | экстент |
+| `Row`, `Col` | pass-1: header; pass-2: data | ячейка сетки |
+| `DominantRow` | pass-2 | строка max overlap экстента |
+| `SourceIndex` | создание | индекс в AllTexts |
+| `Raw`, `Plain` | создание | Contents / sanitized |
+
+---
+
+## 8. `TableGridBuilder.Build()` — порядок шагов
+
+### Фаза A — сбор и сетка
+
+1. Чтение LINE → `GridLineSeg`; TEXT/MTEXT → `TextSample`.
+2. `AutoDetectGridLayer` — слой ≥30% кандидатов (`MinGridLineLen=5000` для выбора слоя).
+3. `BuildMergedGridAxes` — `ClusterAxis`, merge mixed layers, Y desc.
+4. Проверка `rows*cols <= MaxCells`.
+
+### Фаза B — pass 1 (шапка)
+
+5. `AssignCellsHeader` — Row/Col по HeaderX/Y.
+6. `BuildCellMatrix(filterTableLayers: false)`.
+7. `EstimateHeaderEndRow(filteredH)`.
+8. `DetectHeader` → `DetectHeaderByTopTextBand` или fallback `DetectHeaderByColumns`.
+9. `ComputeRowDataStart(horiz: null)`.
+10. `BuildPrimaryNameLayer`, `BuildTableContentLayers`.
+11. `MedianRowStep`, `PrimaryNameTextHeight`.
+
+### Фаза C — pass 2 (данные + KV)
+
+12. `AssignCellsData` — Row по точке DataX/Y; DominantRow.
+13. `SplitNameColumnRowsData` — разнос NAME по строкам (DataY).
+14. `BuildTextsByRow`.
+15. `BuildCellMatrix(filterTableLayers: true)`.
+16. `ComputeRowDataStart(filteredH)`.
+17. **`BindKeysFromProperties`** — ключ.
+18. `BindKeys` — границы блоков.
+19. `AlignRowDataStartToFirstMark`.
+20. **`FillMarkNamesFromMergeGroups`** — значение.
+
+---
+
+## 9. Распознавание шапки — методы и условия
+
+### Основной путь
+
+| Метод | Условие срабатывания | Результат |
+|-------|----------------------|-----------|
+| `TryGetHeaderTopTextBandY` | есть тексты в выборке | полоса maxY−2000..maxY |
+| `DetectHeaderByTopTextBand` | тексты в полосе | ColMark/ColName/ColQty по X |
+| `EnsureUniqueHeaderColumns` | после detect | уникальные роли столбцов |
+| `RefineColMarkByDataMarks` | ColMark < 2 марок в data | смена ColMark по цифрам |
+
+### Fallback
+
+| Метод | Когда |
+|-------|-------|
+| `DetectHeaderByColumns` | ColMark<0 или ColQty<0 после top band |
+| `CollectHeaderTextForColumn` | проходы A (Row/Col), B (geom), C (CellText) |
+| `PickBestHeaderColumn` | score ≥ MinHeaderScore(10) |
+
+### Токены score (`ScoreHeader`)
+
+- Марка: поз, п/п, №, номер…
+- Наименование: наимен, назван…
+- Кол.: кол, колич, к-во, ед…
+
+**CMD:** `ReportDetectedHeader`, `BuildHeaderTopBandDiagnostic`, `BuildHeaderExtendedDiagnostic`.
+
+---
+
+## 10. Ключ (марка) — `BindKeysFromProperties`
+
+**Условия включения текста в кандидаты:**
+
+- `t.Row >= 0`, не `IsSectionHeaderRow`.
+- `DataY < HeaderTopBandLo` (ниже шапки).
+- `IsTextInColumnXBand(ColMark)`.
+- `TryParseMarkKey(Raw/Plain)` успешен.
+
+**Разрешение конфликта в строке:** CellText mark или max DataY.
+
+**Индексы:** `KeyToRowMark`, `RowToKeyMark`.
+
+**Границы:** `BindKeys` → `FindRowTopSub`, `GetMarkBlockEndExclusive`, `GetNextKeyRowExclusive`.
+
+---
+
+## 11. Значение (наименование) — dual-pass + owner mark
+
+### Точка входа
+
+`FillMarkNamesFromMergeGroups` → `ResolveNameFromMergeGroup(key, log, out meta)`.
+
+### Pass 1 — `CollectNamePartsForPositionRange`
+
+Для `r = rowTop .. rowEndExclusive-1`:
+
+- skip: `ResolveMarkKeyAtRow(r) != 0 && != key`.
+- skip: `IsSectionHeaderRow(r)`.
+- `CollectNamePartsFromNameCell`.
+
+**Фильтры в `CollectNamePartsFromNameCell`:**
+
+| Фильтр | Назначение |
+|--------|------------|
+| `PassesCellLayerFilter` | PrimaryNameLayer / Extra / Allowed |
+| `IsTextInColumnXBand(ColName)` | X в столбце NAME |
+| `TextOverlapsRowBand` | overlap ≥30% MText / ≥42% point |
+| **`NameTextBelongsToMarkKey`** | owner mark == key |
+
+**Без PickBest** — все hits добавляются. `consumedSources` — dedup SourceIndex. `[NAME-STOP]` — второй standalone.
+
+### Pass 2 — `SupplementNamePartsInVerticalBand`
+
+- Y: `GridYs[rowTop]` .. `GridYs[rowEndExclusive]`.
+- `DataY` в полосе (без overlap test).
+- Тот же `NameTextBelongsToMarkKey`.
+- `TryAddNamePartExact` — dedup строк.
+
+### Owner mark
+
+| Метод | Логика |
+|-------|--------|
+| `ResolveOwnerMarkKeyForNameText` | markAtPoint(t.Row), markAtDom(DominantRow); конфликт → upper row |
+| `NameTextBelongsToMarkKey` | owner==key или owner==0 && row в блоке |
+
+Лог: `[NAME-FOREIGN-SKIP]`, `[NAME-ROW]`, `[NAME-SUPPLEMENT]`, `[KV-PAIR] value=`, `[NAME-BOUNDARY]`.
+
+### Текстовые эвристики (`MTextPlainText`)
+
+| Метод | Условие |
+|-------|---------|
+| `EnumerateDisplayNameLines` | split `\P` |
+| `LooksLikeSectionHeaderLine` | заголовок раздела → skip |
+| `IsStandaloneProductName` | полное изделие → stop на втором |
+| `IsAcceptableNameContinuation` | длина/score для хвоста |
+| `NameScore` | эвристика «похоже на имя» |
+
+---
+
+## 12. `CellIndex` — привязка к сетке
+
+| Метод | eps | Назначение |
+|-------|-----|------------|
+| `TryGetCellIndex(x,y,xs,ys)` | 2.0 | row/col по точке |
+| `GetCellText(samples)` | — | один winner на ячейку (CellText matrix) |
+| `TryGetRowByExtent` | minFraction | строка по overlap YMin..YMax |
+| `GetDominantRow(t, gridYs)` | 0.30 MText / 0.50 DBText | dominant row для bleed/owner |
+
+---
+
+## 13. Слои текста таблицы
+
+### `BuildTableContentLayers`
+
+- ~90% текстов в data columns → `AllowedTableTextLayers`.
+- редкие → `ExcludedAnnotationLayers`.
+
+### `BuildPrimaryNameLayer`
+
+- ColName, Row ≥ RowDataStart: max count layer → `PrimaryNameLayer`.
+- ≥5% + NameScore>0 → `ExtraNameLayers`.
+
+### `PassesCellLayerFilter`
+
+- ColName: Primary + Extra, не Excluded.
+- прочие data cols: Allowed, не Excluded.
+
+---
+
+## 14. Запись «Кол.» — `SpecGridService`
+
+| Метод | Назначение |
+|-------|------------|
+| `TryBuildQtyByKeyForWriteback` | qty из видимых строк палитры |
+| `ResolveQtyCellRowBottomExByColQtyGrid` | низ merged ячейки ColQty |
+| `ResolveNextKeyRowTopEx` | потолок ячейки |
+| `ResolveQtyInsertPoint` | центр X/Y ячейки |
+| `FindQtyTextInCell` | найти существующий qty-текст |
+| `ResolveQtyTableTextAppearanceForScope` | стиль из ColQty → body → 2.5 |
+| `UpsertQtyText` | update/create DBText |
+
+**Не пишет:** наименование, примечания инженера (намеренно сохраняются при update).
+
+---
+
+## 15. Логи CMD (активные)
+
+| Тег | Источник |
+|-----|----------|
+| `[POSC] Распознана шапка…` | ReportDetectedHeader |
+| `[POSC] Марка: наложение…` | BindKeysFromProperties |
+| `[POSC] Сетка таблицы: линии на разных слоях…` | Grid merge |
+| `[KV-PAIR] key= value=` | FillMarkNames |
+| `[NAME-BOUNDARY]` | ResolveNameFromMergeGroup |
+| `[NAME-ROW]` | CollectNamePartsFromNameCell |
+| `[NAME-SUPPLEMENT]` | SupplementNamePartsInVerticalBand |
+| `[NAME-FOREIGN-SKIP]` | NameTextBelongsToMarkKey |
+| `[NAME-BLEED]` | IsUpstreamBleedFromForeignMark (diag) |
+| `[NAME-STOP]` / `[NAME-SECTION]` | name filters |
+| `[CELL-SPLIT-DATA]` | SplitNameColumnRowsData |
+
+---
+
+## 16. Сборка
+
+| AutoCAD | Framework | Скрипт |
+|---------|-----------|--------|
+| 2016–2024 | net46 | `build\build-ac2016.cmd` |
+| 2025+ | net8.0-windows | `build\build-ac2026.cmd` |
+
+Пути: `build\AutoCAD.props` (из template). Подробно: `docs/BUILD.md`.
+
+---
+
+## 17. Красные зоны
+
+- `PosCounterEngine` — не менять.
+- Pass-1 шапка: `AssignCellsHeader`, `DetectHeader*`, `EstimateHeaderEndRow`.
+- `BuildMergedGridAxes`, sort GridYs desc.
+- Qty — только ColQty; палитра qty = LOCK engine output.
+
+---
+
+## 18. Ручная проверка
+
+1. NETLOAD → палитра автоматически.
+2. ЗАПУСТИТЬ → марки/количества.
+3. Выбрать спецификацию → имена + «Кол.» на DWG.
+4. `_tex_fek`: марки 4/5 (owner), 52 (multi-line), 6–9 (не пусто), шапка H1–H4.
+
+---
+
+## 19. Связанные документы
+
 - Инженер: `docs/INSTRUCTION_ENGINEER.md`
-
-## Сборка
-
-| AutoCAD | Скрипт | Framework |
-|---------|--------|-----------|
-| 2016–2024 | `build\build-ac2016.cmd` | `net46` |
-| 2025+ | `build\build-ac2026.cmd` | `net8.0-windows` |
-
-Пути к установленному AutoCAD: `build\AutoCAD.props` (из `build\AutoCAD.props.template`), импорт через `Directory.Build.props`.
-
-**net46 (AutoCAD 2016):** NuGet `System.ValueTuple` — кортежи в `CellIndex.cs` и ключи `Dictionary (r,c)` в `TableGrid.cs`; без пакета VS выдаёт CS8179/CS8137.
-
-## Команды AutoCAD
-
-
-| Команда                    | Назначение                                                          |
-| -------------------------- | ------------------------------------------------------------------- |
-| `NETLOAD`                  | Загрузка DLL → **палитра открывается сама** (`Commands.Initialize`) |
-| `POSC`                     | Единственная команда для пользователя — показать палитру            |
-| `POSC2_RUN_INTERNAL`       | Служебная: подсчёт (палитра «ЗАПУСТИТЬ»)                            |
-| `POSC2_SPEC_INTERNAL`      | Служебная: pick spec + qty + имена                                  |
-| `POSC2_HIGHLIGHT_INTERNAL` | Служебная: подсветка handles                                        |
-
-
-Служебные: `CommandFlags.NoHistory | NoActionRecording | Session`.
-
-## Сценарий в палитре
-
-1. **ЗАПУСТИТЬ** — `PosCounterEngine` (LOCK).
-2. **Выбрать спецификацию** — N рамок, `SpecGridSession.Scopes`, writeback **Кол.** из видимых qty.
-3. **Сброс** — очистка in-memory сессии без `NETLOAD`: `_lastCountRows`, `_rowsAll`, `_lastMarkNames`, `SpecGridSession.ClearScopes()`, фильтры палитры, таблица и индикаторы; подсветка на чертеже — `Commands.ClearDrawingHighlight()`. Настройка «Все объекты в модели» не сбрасывается.
-4. **Экспорт** (низ палитры) — `ExportService`, не CellText таблицы.
-
-## Логи
-
-Диагностика отключена. В CMD: `[INFO]` при pick таблиц, `[POSC]` при отсутствии qty, смешанных слоях сетки, пустой «Поз.». Статус — `PosCounterControl.SetStatus`.
-
-## Сетка таблицы (spec-grid-qty-fix)
-
-- `TableGridBuilder.BuildMergedGridAxes` — доминирующий слой (≥30%) + виртуальное дополнение осей X/Y с других слоёв (`GridAxesMergedFromMixedLayers`, `GridMergeLayerNote`).
-- `GridLineSeg.SegmentLength`, `Y1/Y2` — вертикали участвуют в `AutoDetectGridLayer` / `IsGridCandidate`.
-- `SpecGridService.ResolveQtyCellRowBottomExByColQtyGrid` — нижняя граница ячейки «Кол.» (exclusive) по H-линиям в полосе X ColQty (`HasHBorderAt` + `scope.HorizontalLines`); потолок — `ResolveNextKeyRowTopEx` (верх следующей марки), **не** `KeyToMarkBlockEnd`.
-- `SpecGridService.ResolveQtyInsertPoint` — Y = `(GridYs[rowTop] + GridYs[rowBottomEx]) / 2`; при однострочной ColQty (`rowBottomEx == rowTop+1`) поведение как после отката; X по геометрическому центру ячейки (`gridCenter`).
-- `FindQtyTextInCell` — при merged ColQty (`rowBottomEx > rowTop+1`): `IsPointInQtyCellSpan` + tie-break ближайший к Y центру; иначе одна строка + tie-break по длине текста.
-- `QtyTableTextAppearance.TextHeight` — из ColQty → тело таблицы; fallback `QtyTextHeightFallback = 2.5`.
-- CMD: `ReportGridBuildWarnings`, `ReportEmptyMarkColumnWarnings`.
-
-## Шапка таблицы (header-col-detect-log)
-
-- `TableGridBuilder.DetectHeader` — после `EstimateHeaderEndRow` читает шапку по динамическому `HeaderEndRow` (fallback `HeaderScanMaxRow+1`); использует `AllTexts` для устойчивости к MText/разметке.
-- `SpecGridService.ReportDetectedHeader` — пишет в CMD: «Распознана шапка…» и перечисляет найденные столбцы (`ColMark`, `ColName`, `ColQty`) с короткой подписью из шапки.
-
-## Шапка MText + уникальные столбцы (header-qty-cell-fix)
-
-- `CreateTextSampleFromMText` — для привязки к ячейке (`AssignCells`) точка MText = **центр** `GeometricExtents` (`ExtentsCenter`), fallback `Location`. DBText без изменений.
-- `BuildHeaderTextForColumn` — единый источник текста шапки (`AllTexts` + fallback `CellText`); используется в `DetectHeader` и `DescribeHeaderColumn` (CMD).
-- `EnsureUniqueHeaderColumns` — порядок назначения: **Марка → Кол. → Наименование**; один столбец — одна роль; при коллизии берётся следующий по score; вызывается в `DetectHeader` до pass-2 `CellText` и `BindKeys`.
-- `ResolveVisualQtyColumnCenterX` — **не менялся**: X = геометрический центр ячейки сетки (`gridCenter`).
-- План: `plans/header-qty-cell-fix.md`
-
-## Ложные столбцы шапки (fix-header-phantom-cols)
-
-- `MinHeaderScore = 10` — столбец назначается только при совпадении слова в шапке (`PickBestHeaderColumn`); score 0 → `Col = -1`, не «столбец 0 «—»».
-- `BuildHeaderTextForColumn` — после `Row/Col` добавлен геометрический проход: X в полосе `GridXs[col]`, Y в полосе шапки (`GridYs[0]..GridYs[HeaderScanMaxRow+1]`).
-- Расширенные токены: марка (`п/п`, `№`, `номер`…), наименование (`назван`…), кол. (`кол-во`, `к-во`, `ед`).
-- `ReportDetectedHeader` — отдельные `[POSC]` при `Col = -1` и при пустом заголовке «—».
-- План: `plans/fix-header-phantom-cols.md`
-
-## Шапка DBText (fix-header-dbtext-geom)
-
-- `CreateTextSampleFromDbText` — центр `GeometricExtents`, fallback `GetDbTextPoint`; `[CELL-ASSIGN] kind=DBText` лимит 20.
-- `CollectHeaderTextForColumn` — проходы A (Row/Col) → B (геометрия, всегда) → C (`CellText` fallback).
-- `TryGetHeaderBandY` — `yTop = Max(GridYs[0], GridYs[n])`, `yBottom = Min(...)`.
-- `BuildHeaderDiagnosticMessage` — CMD `[POSC] Диагностика шапки` только при `ColMark < 0` или `ColQty < 0`.
-- Токен `поз.` в score марки.
-- План: `plans/fix-header-dbtext-geom.md`
-
-## Динамическая полоса шапки по Y (fix-header-y-band)
-
-- `ScopeGridResult.HeaderEndRow` — нижняя граница шапки (exclusive): строки `0 .. HeaderEndRow-1`.
-- `EstimateHeaderEndRow` — до `DetectHeader`: H-линии на полной ширине (`MaxHeaderBorderScanRow=12`), fallback — первая строка с `TryParseMarkKey` (r≥2) или `min(6, rows-1)`.
-- `FindHeaderBoundaryRow` — общая логика границы по горизонталям; используется в `EstimateHeaderEndRow` и `FindFirstDataRowAfterHeaderBoundary`.
-- `ResolveHeaderEndRow` — `HeaderEndRow` если >0, иначе `HeaderScanMaxRow+1`.
-- `TryGetHeaderBandY` / `CollectHeaderTextForColumn` — полоса Y и проходы A/C по `headerEndRow`, не фиксированные 0..3.
-- `IsAllHeaderGeomZero` + `BuildHeaderExtendedDiagnostic` — при `geom=0` на всех столбцах: Y-полоса, до 3 текстов (DBText→MText) с `colHit` и `Y в полосе?`.
-- Порядок в `Build`: pass1 `CellText` → `EstimateHeaderEndRow(filteredH)` → `DetectHeader`.
-- План: `plans/fix-header-y-band.md`
-
-## Шапка по верхней полосе текстов (header-text-top-band)
-
-- **Проблема:** при смешанных слоях линий `GridYs` может быть неверным; тексты шапки имеют корректные X/Y из `GeometricExtents`.
-- `HeaderTopBandHeight = 2000` — полоса `[maxY−2000 .. maxY]` (СПДС: от «Спецификация» до строки «Поз./Кол.»).
-- `DetectHeaderByTopTextBand` — основной путь: ключевые слова в текстах полосы, столбец только по `ResolveColumnIndexByX` (без `Row`/`Col` из сетки).
-- `DetectHeader` → сначала текстовая полоса; при `ColMark<0` или `ColQty<0` — fallback `DetectHeaderByColumns` (старый путь + `fix-header-y-band`).
-- `HeaderDetectedByTopTextBand` — флаг успеха; `BuildHeaderTextForColumn` для CMD берёт тексты полосы только при этом флаге.
-- CMD: `BuildHeaderTopBandDiagnostic` при сбое; `BuildHeaderExtendedDiagnostic` — только если fallback и `IsAllHeaderGeomZero`.
-- План: `plans/header-text-top-band.md`
-
-## Уточнение ColMark по цифрам в данных (refine-colmark-by-data)
-
-- `CountDataMarkKeysInColumn` — как `BindKeys`: `Row≥0`, `!IsSectionHeaderRow`, `IsTextInColumnXBand`, `Y<HeaderTopBandLo` + `CellText` по столбцу; при refine пропуск `ColQty`.
-- `RefineColMarkByDataMarks` — после `EnsureUniqueHeaderColumns`: если в ColMark `< 2` марок, выбрать столбец с max марок, boost `markScores`, **повторный** `EnsureUniqueHeaderColumns`.
-- `ColMarkRefinedFrom` / `ColMarkRefinedTo` — CMD `FormatColMarkRefineMessage`; при пустом `KeyToRowMark` — `FormatDataMarkCountsDiagnostic`.
-- План: `plans/refine-colmark-by-data.md`
-
-## Исправление порядка GridYs при merge слоёв (fix-grid-ys-merge-order)
-
-- `BuildMergedGridAxes` при mixed layers вызывает `MergeAxisClusters` с `sortAsc: false` для Y (сверху вниз) и `true` для X.
-- Раньше `MergeAxisClusters` всегда сортировал по возрастанию → `GridYs` переворачивался → `TryGetCellIndex` не находил строки (`Row=-1`) → `BindKeys` и подсчёт марок = 0.
-- План: `plans/fix-grid-ys-merge-order.md`
-
-## Properties KV pipeline (properties-kv-v2)
-
-План: `properties_kv_v2_f507a30c.plan.md` (заменяет `strict_properties_kv_92255370`).
-
-- **Ключ:** `BindKeysFromProperties` — `Contents`/`Raw` из ColMark, геометрия `DataX`/`DataY`; `KeyToRowMark` заполняется только здесь. Конфликт двух марок в одной строке → победитель по `CellText` или верхний по `DataY`; CMD `[POSC] Марка: наложение…`.
-- **Значение:** `CollectNamePartsFromProperties` — `Contents` из ColName по диапазону строк марки; `PickNameTextForRow` — один текст на строку (PrimaryNameLayer → ExtraNameLayers → NameScore); CMD `[POSC] NAME-OVERLAY…`.
-- **Геометрия:** `TextSample` — `HeaderX/Y` (шапка, ExtentsCenter), `DataX/Y` (Position/Location; MText KV: **верх рамки YMax**), `YMin`/`YMax`, `TextHeight`, `SourceIndex`. Pass-1 `AssignCellsHeader`; pass-2 `AssignCellsData` (**Row по точке DataX/Y** для всех data-колонок; `DominantRow` — только bleed/diag).
-- **Экстент:** `TryGetRowOverlapFraction` / `TextOverlapsRowBand`; fallback высоты: `TextHeight` → `PrimaryNameTextHeight` → `MedianRowStep` → `QtyTextHeightFallback`.
-- **Spanning MText:** `SourceIndex` + `consumedSources` — `\P`-строки из одного объекта не дублируются на нижних строках.
-- **Парсер марки:** `TryParseMarkKey` — хвостовые `. , ; : ) ]` (`43.` → 43).
-- **Палитра:** без изменений — `MarkNamePairs` → `BuildCombinedMarkNames` → `ApplyMarkNamesToPalette`.
-- **Лог:** `[KV-PAIR]`, `[NAME-JOIN]` с `texts=N`.
-
-## Properties KV v2.1 — bleed / stop (kv-v2-bleed-fix)
-
-- `CellIndex.TryGetRowByExtent`, `GetDominantRow`; `TextSample.DominantRow` в `AssignCellsData`.
-- `RowToKeyMark` + `ResolveMarkKeyAtRow` — properties-first границы марок.
-- `IsUpstreamBleedFromForeignMark` — skip текста, чей dominant row принадлежит другой марке; **не** отбрасывает `t.Row == row`; CMD `[NAME-BLEED]`.
-- `PickBestTextSampleForRow` — `NameScore > 0` или `IsAcceptableNameContinuation`; CMD `[NAME-OVERLAY]`.
-- `StopAtSecondStandaloneName` — break при втором standalone; CMD `[NAME-STOP]`.
-- `LooksLikeSectionHeaderLine`, `IsStandaloneProductName` в `MTextPlainText`; CMD `[NAME-SECTION]`.
-- `TextsByRow` — по `t.Row`; fallback на `AllTexts`, если кэш строки пуст.
-
-## MText + DBText row binding (mtext-dbtext-row-fix)
-
-- **MText data-точка:** `CreateTextSampleFromMText` — `DataY = YMax` (верх extents); шапка pass-1 без изменений (`ExtentsCenter`).
-- **Pass-2 Row:** `AssignCellsData` — `Row = TryGetCellIndex(DataX, DataY)` для ColMark и ColName; `DominantRow = GetDominantRow` отдельно (bleed).
-- **Split после pass-2:** `SplitNameColumnRowsData` — по `DataX/DataY`, только ColName; CMD `[CELL-SPLIT-DATA]`.
-- **Anti-bleed:** `IsUpstreamBleedFromForeignMark` + `TextPointInRowBand` — pass 1; CMD `[NAME-BLEED]`.
-- **Dual-pass сбор значения** (откат DominantRow gate — давал пустые имена):
-  - Pass 1: `CollectNamePartsForPositionRange` → `CollectNamePartsFromNameCell` — все тексты строки с `TextOverlapsRowBand`, без winner.
-  - Pass 2: `SupplementNamePartsInVerticalBand` — добор по Y-полосе блока марки (без overlap), страховка для DBText с «съехавшим» Row.
-  - Склейка: `TryAddNamePartExact` + `string.Join`; CMD `[NAME-ROW]`, `[NAME-SUPPLEMENT]`, `[KV-PAIR] value=`.
-- **Шапка:** без изменений — `DetectHeader*`, `AssignCellsHeader`, pass-1 `CellText`.
-
-## Ключевые классы
-
-- `Commands.cs` — `Initialize` → auto `ShowPalette`; POSC + POSC2_*
-- `PaletteHost.cs` — `RequestRun`, `RequestSelectSpec`, `TryBuildQtyByKeyForWriteback`
-- `SpecGrid/TableGrid.cs` — сетка, merge имён
-- `SpecGrid/SpecGridService.cs` — pick, `WriteQtyScope`, стиль qty per scope
-- `SpecGrid/CellIndex.cs` — ячейка eps=2
-- `Engine/PosCounterEngine.cs` — **не менять** без ТЗ
-
-## Ограничения
-
-- `PosCounterEngine` — PALETTE-COUNT-LOCK.
-- DWG: только колонка «Кол.».
-- Имена в палитру — с фильтром слоя.
-
-## Ручная проверка
-
-- NETLOAD → палитра без ввода POSC
-- ЗАПУСТИТЬ → строки в таблице
-- Выбрать спецификацию → NameFromSpec + «Кол.» в DWG
-- Стиль «Кол.» как основной текст таблицы, сноски на месте
-- POSC повторно открывает палитру
-
+- Простым языком: `Работа программы.md`
+- Факт-план: `.cursor/plans/factual_program_architecture.plan.md`
+- История правок: `.cursor/DIALOGUE_LOG.md`

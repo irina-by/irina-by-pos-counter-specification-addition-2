@@ -2104,6 +2104,64 @@ namespace PosCounter.Net.SpecGrid
             return CellIndex.GetDominantRow(t, grid.GridYs, grid);
         }
 
+        private static int ResolveOwnerMarkKeyForNameText(ScopeGridResult grid, TextSample t)
+        {
+            var markAtPoint = t.Row >= 0 ? ResolveMarkKeyAtRow(grid, t.Row) : 0;
+            var domRow = GetDominantRowForText(t, grid);
+            var markAtDom = domRow >= 0 ? ResolveMarkKeyAtRow(grid, domRow) : 0;
+
+            if (markAtPoint > 0 && markAtDom > 0)
+            {
+                if (markAtPoint == markAtDom)
+                {
+                    return markAtPoint;
+                }
+
+                var upperRow = t.Row >= 0 && domRow >= 0 ? Math.Min(t.Row, domRow) : (t.Row >= 0 ? t.Row : domRow);
+                return ResolveMarkKeyAtRow(grid, upperRow);
+            }
+
+            if (markAtPoint > 0)
+            {
+                return markAtPoint;
+            }
+
+            if (markAtDom > 0)
+            {
+                return markAtDom;
+            }
+
+            return 0;
+        }
+
+        private static bool NameTextBelongsToMarkKey(
+            ScopeGridResult grid,
+            int key,
+            int rowTop,
+            int rowEndExclusive,
+            TextSample t,
+            SpecGridLog log)
+        {
+            var owner = ResolveOwnerMarkKeyForNameText(grid, t);
+            if (owner > 0)
+            {
+                if (owner != key && ShouldLogForeignSkip(key))
+                {
+                    log?.Debug(
+                        $"[NAME-FOREIGN-SKIP] scope={grid.ScopeIndex} key={key} owner={owner} src={t.SourceIndex} tRow={t.Row} display=\"{TrimForLog(GetDisplayText(t), 40)}\"");
+                }
+
+                return owner == key;
+            }
+
+            return t.Row >= rowTop && t.Row < rowEndExclusive;
+        }
+
+        private static bool ShouldLogForeignSkip(int key)
+        {
+            return key == 1 || key == 3 || key == 4 || key == 5 || key == 52 || key == 98;
+        }
+
         private static bool IsUpstreamBleedFromForeignMark(
             ScopeGridResult grid,
             int key,
@@ -2232,7 +2290,7 @@ namespace PosCounter.Net.SpecGrid
                     continue;
                 }
 
-                if (CollectNamePartsFromNameCell(grid, key, r, parts, consumedSources, log, ref textCount))
+                if (CollectNamePartsFromNameCell(grid, key, rowTop, rowEndExclusive, r, parts, consumedSources, log, ref textCount))
                 {
                     return textCount;
                 }
@@ -2245,6 +2303,8 @@ namespace PosCounter.Net.SpecGrid
         private static bool CollectNamePartsFromNameCell(
             ScopeGridResult grid,
             int key,
+            int rowTop,
+            int rowEndExclusive,
             int row,
             List<string> parts,
             HashSet<int> consumedSources,
@@ -2258,7 +2318,7 @@ namespace PosCounter.Net.SpecGrid
                 .Where(t => PassesCellLayerFilter(t, grid))
                 .Where(t => IsTextInColumnXBand(grid, grid.ColName, t))
                 .Where(t => TextOverlapsRowBand(t, yTop, yBottom, grid))
-                .Where(t => !IsUpstreamBleedFromForeignMark(grid, key, row, yTop, yBottom, t, log))
+                .Where(t => NameTextBelongsToMarkKey(grid, key, rowTop, rowEndExclusive, t, log))
                 .OrderByDescending(t => t.DataY)
                 .ThenBy(t => t.DataX)
                 .ToList();
@@ -2331,6 +2391,7 @@ namespace PosCounter.Net.SpecGrid
                 .Where(t => PassesCellLayerFilter(t, grid))
                 .Where(t => IsTextInColumnXBand(grid, grid.ColName, t))
                 .Where(t => t.DataY <= yTop + eps && t.DataY > yBottom - eps)
+                .Where(t => NameTextBelongsToMarkKey(grid, key, rowTop, rowEndExclusive, t, log))
                 .OrderByDescending(t => t.DataY)
                 .ThenBy(t => t.DataX)
                 .ToList();
@@ -2348,18 +2409,9 @@ namespace PosCounter.Net.SpecGrid
                     CellIndex.TryGetCellIndex(t.DataX, t.DataY, grid.GridXs, grid.GridYs, out textRow, out _);
                 }
 
-                if (textRow >= 0)
+                if (textRow >= 0 && IsSectionHeaderRow(grid, textRow))
                 {
-                    var markAtTextRow = ResolveMarkKeyAtRow(grid, textRow);
-                    if (markAtTextRow > 0 && markAtTextRow != key)
-                    {
-                        continue;
-                    }
-
-                    if (IsSectionHeaderRow(grid, textRow))
-                    {
-                        continue;
-                    }
+                    continue;
                 }
 
                 var beforeCount = parts.Count;
