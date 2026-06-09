@@ -108,6 +108,11 @@ namespace PosCounter.Net.SpecGrid
         public double PrimaryNameTextHeight;
         /// <summary>Кэш текстов ColName по строке (pass-2 data).</summary>
         public Dictionary<int, List<TextSample>> TextsByRow = new Dictionary<int, List<TextSample>>();
+        /// <summary>Источник — явная AutoCAD Table (без LINE-сетки).</summary>
+        public bool IsNativeAcadTable;
+        public ObjectId NativeTableId = ObjectId.Null;
+        /// <summary>В выборке были Table и Line — использован LINE path.</summary>
+        public bool MixedTableLineSelection;
     }
 
     internal static class TableGridBuilder
@@ -133,11 +138,53 @@ namespace PosCounter.Net.SpecGrid
                 return result;
             }
 
+            Table nativeTable = null;
+            var nativeTableCount = 0;
+            var lineCount = 0;
+            foreach (var id in objectIds)
+            {
+                if (id.IsNull || !id.IsValid)
+                {
+                    continue;
+                }
+
+                Entity ent;
+                try
+                {
+                    ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (ent is Table tbl)
+                {
+                    nativeTableCount++;
+                    nativeTable = tbl;
+                }
+                else if (ent is Line)
+                {
+                    lineCount++;
+                }
+            }
+
+            if (nativeTable != null && lineCount == 0)
+            {
+                return BuildFromAcadTable(scopeIndex, nativeTable, objectIds, tr, log);
+            }
+
+            if (nativeTableCount > 0 && lineCount > 0)
+            {
+                result.MixedTableLineSelection = true;
+                log.Warn($"TABLE-GRID: scope={scopeIndex} Mixed selection (Table + Line), using LINE path");
+            }
+
             var horiz = new List<GridLineSeg>();
             var vert = new List<GridLineSeg>();
             var texts = new List<TextSample>();
             Extents3d? bounds = null;
-            var lineCount = 0;
+            lineCount = 0;
 
             foreach (var id in objectIds)
             {
@@ -284,6 +331,7 @@ namespace PosCounter.Net.SpecGrid
             // Pass 1: all layers → header + layer statistics.
             result.CellText = BuildCellMatrix(texts, rows, cols, result, log, filterTableLayers: false);
             EstimateHeaderEndRow(result, filteredH, log);
+            ApplyHeaderBoundaryFromGridScan(result, log);
             DetectHeader(result, log);
             ComputeRowDataStart(result, null, log);
             BuildPrimaryNameLayer(texts, result, log);
@@ -299,6 +347,13 @@ namespace PosCounter.Net.SpecGrid
             BindKeysFromProperties(result, log);
             BindKeys(result, filteredH, log);
             AlignRowDataStartToFirstMark(result, log);
+            if (result.RowDataStart > 0)
+            {
+                result.HeaderEndRow = result.HeaderEndRow > 0
+                    ? Math.Min(result.HeaderEndRow, result.RowDataStart)
+                    : result.RowDataStart;
+            }
+
             FillMarkNamesFromMergeGroups(result, log);
             log.Grid($"scope={scopeIndex} lines={lineCount} h={filteredH.Count} v={filteredV.Count} layer=\"{gridLayer}\" Xs={xs.Count} Ys={ys.Count} valid=YES");
             return result;
@@ -338,7 +393,9 @@ namespace PosCounter.Net.SpecGrid
 
             foreach (var kv in buckets)
             {
-                cells[kv.Key.r, kv.Key.c] = CellIndex.GetCellText(kv.Value, log, result.ScopeIndex, kv.Key.r, kv.Key.c);
+                var preferMark = result.ColMark >= 0 && kv.Key.c == result.ColMark;
+                cells[kv.Key.r, kv.Key.c] = CellIndex.GetCellText(
+                    kv.Value, log, result.ScopeIndex, kv.Key.r, kv.Key.c, preferMark);
             }
 
             return cells;
@@ -522,8 +579,12 @@ namespace PosCounter.Net.SpecGrid
 
         private const int HeaderScanMaxRow = 3;
         private const int MaxHeaderBorderScanRow = 12;
-        /// <summary>Верхняя полоса шапки по текстам: от maxY вниз (СПДС: «Спецификация» + строка заголовков).</summary>
+        /// <summary>Верхняя полоса шапки по текстам (fallback CMD): от maxY вниз.</summary>
         private const double HeaderTopBandHeight = 2000.0;
+        /// <summary>Минимальная строка для эвристики «наименование-данные» при grid scan.</summary>
+        private const int GridScanNameDataMinRow = 2;
+        /// <summary>CellText достаточен — не дублировать AllTexts pass.</summary>
+        private const int CellTextOnlyNameMinLength = 20;
 
         /// <summary>Минимум score для назначения столбца (одно совпадение токена в ScoreHeader).</summary>
         private const int MinHeaderScore = 10;
@@ -542,7 +603,12 @@ namespace PosCounter.Net.SpecGrid
             var maxY = double.NegativeInfinity;
             foreach (var t in result.AllTexts)
             {
-                if (t != null && t.Y > maxY)
+                if (t == null)
+                {
+                    continue;
+                }
+
+                if (t.Y > maxY)
                 {
                     maxY = t.Y;
                 }
@@ -591,9 +657,15 @@ namespace PosCounter.Net.SpecGrid
                 return;
             }
 
+            var headerEndRow = ResolveHeaderEndRow(result);
             foreach (var t in result.AllTexts ?? new List<TextSample>())
             {
                 if (t == null || t.Y < yLo || t.Y > yHi)
+                {
+                    continue;
+                }
+
+                if (t.Row >= 0 && t.Row >= headerEndRow)
                 {
                     continue;
                 }
@@ -603,7 +675,13 @@ namespace PosCounter.Net.SpecGrid
                     continue;
                 }
 
-                AppendHeaderTextPart(parts, seen, !string.IsNullOrWhiteSpace(t.Raw) ? t.Raw : (t.Plain ?? string.Empty));
+                var plain = !string.IsNullOrWhiteSpace(t.Raw) ? t.Raw : (t.Plain ?? string.Empty);
+                if (MTextPlainText.TryParseMarkKey(plain, out _))
+                {
+                    continue;
+                }
+
+                AppendHeaderTextPart(parts, seen, plain);
             }
         }
 
@@ -835,6 +913,16 @@ namespace PosCounter.Net.SpecGrid
             return HeaderScanMaxRow + 1;
         }
 
+        private static int ResolveGridRowCount(ScopeGridResult result)
+        {
+            if (result?.CellText != null)
+            {
+                return result.CellText.GetLength(0);
+            }
+
+            return result?.GridYs?.Count ?? 0;
+        }
+
         private static string FormatHeaderDiagnosticLabel(string header)
         {
             var s = MTextPlainText.SanitizeRawContents(header ?? string.Empty).Trim();
@@ -913,34 +1001,86 @@ namespace PosCounter.Net.SpecGrid
                 || (t.X >= xL - eps && t.X <= xR + eps);
         }
 
+        /// <summary>Y-граница данных: верх первой строки данных (не maxY−2000).</summary>
+        private static double ResolveDataYCutoff(ScopeGridResult result)
+        {
+            if (result?.GridYs == null || result.GridYs.Count < 2)
+            {
+                return double.NegativeInfinity;
+            }
+
+            if (result.RowDataStart > 0 && result.RowDataStart < result.GridYs.Count)
+            {
+                return result.GridYs[result.RowDataStart];
+            }
+
+            var headerEnd = ResolveHeaderEndRow(result);
+            if (headerEnd > 0 && headerEnd < result.GridYs.Count)
+            {
+                return result.GridYs[headerEnd];
+            }
+
+            return double.NegativeInfinity;
+        }
+
+        /// <summary>Текст в зоне данных (не шапка): по RowDataStart, иначе по Y-cutoff сетки.</summary>
+        private static bool IsBindableDataText(ScopeGridResult result, TextSample t)
+        {
+            if (result == null || t == null)
+            {
+                return false;
+            }
+
+            if (t.Row < 0)
+            {
+                return false;
+            }
+
+            if (IsSectionHeaderRow(result, t.Row))
+            {
+                return false;
+            }
+
+            if (result.RowDataStart > 0)
+            {
+                return t.Row >= result.RowDataStart;
+            }
+
+            var yCutoff = ResolveDataYCutoff(result);
+            if (double.IsNegativeInfinity(yCutoff))
+            {
+                return true;
+            }
+
+            return t.DataY < yCutoff;
+        }
+
         /// <summary>
         /// Уникальные марки, которые реально сможет привязать BindKeys для столбца col
-        /// (Row≥0, не секционная строка, X-полоса столбца, ниже шапки по Y).
+        /// (Row≥0, не секционная строка, X-полоса столбца, строка данных).
         /// </summary>
         private static int CountDataMarkKeysInColumn(ScopeGridResult result, int col)
         {
-            if (result == null || col < 0 || result.GridXs == null || result.GridXs.Count < 2)
+            if (result == null || col < 0)
             {
                 return 0;
             }
 
-            TryGetHeaderTopTextBandY(result, out _, out _);
-            var yCutoff = result.HeaderTopBandLo;
+            if (result.IsNativeAcadTable)
+            {
+                return CountDataMarkKeysInColumnFromCellText(result, col);
+            }
+
+            if (result.GridXs == null || result.GridXs.Count < 2)
+            {
+                return 0;
+            }
+
             var keys = new HashSet<int>();
 
             foreach (var t in result.AllTexts ?? new List<TextSample>())
             {
-                if (t == null || t.Row < 0)
-                {
-                    continue;
-                }
-
-                if (IsSectionHeaderRow(result, t.Row))
-                {
-                    continue;
-                }
-
-                if (yCutoff != 0 && t.DataY >= yCutoff)
+                if (t == null || !IsBindableDataText(result, t))
                 {
                     continue;
                 }
@@ -956,25 +1096,44 @@ namespace PosCounter.Net.SpecGrid
                 }
             }
 
-            if (result.CellText != null && col < result.CellText.GetLength(1))
-            {
-                var rows = result.CellText.GetLength(0);
-                for (var r = 0; r < rows; r++)
-                {
-                    if (IsSectionHeaderRow(result, r))
-                    {
-                        continue;
-                    }
+            AddMarkKeysFromCellText(result, col, keys);
+            return keys.Count;
+        }
 
-                    var cell = result.CellText[r, col] ?? string.Empty;
-                    if (MTextPlainText.TryParseMarkKey(cell, out var key))
-                    {
-                        keys.Add(key);
-                    }
-                }
+        private static int CountDataMarkKeysInColumnFromCellText(ScopeGridResult result, int col)
+        {
+            if (result?.CellText == null || col < 0 || col >= result.CellText.GetLength(1))
+            {
+                return 0;
             }
 
+            var keys = new HashSet<int>();
+            AddMarkKeysFromCellText(result, col, keys);
             return keys.Count;
+        }
+
+        private static void AddMarkKeysFromCellText(ScopeGridResult result, int col, HashSet<int> keys)
+        {
+            if (result?.CellText == null || col < 0 || col >= result.CellText.GetLength(1))
+            {
+                return;
+            }
+
+            var rows = result.CellText.GetLength(0);
+            var dataStart = result.RowDataStart > 0 ? result.RowDataStart : ResolveHeaderEndRow(result);
+            for (var r = dataStart; r < rows; r++)
+            {
+                if (IsSectionHeaderRow(result, r))
+                {
+                    continue;
+                }
+
+                var cell = result.CellText[r, col] ?? string.Empty;
+                if (MTextPlainText.TryParseMarkKey(cell, out var key))
+                {
+                    keys.Add(key);
+                }
+            }
         }
 
         private static void RefineColMarkByDataMarks(
@@ -1057,12 +1216,22 @@ namespace PosCounter.Net.SpecGrid
 
         internal static string FormatDataMarkCountsDiagnostic(ScopeGridResult scope)
         {
-            if (scope?.GridXs == null || scope.GridXs.Count < 2)
+            if (scope?.CellText == null)
             {
                 return string.Empty;
             }
 
-            var cols = scope.GridXs.Count - 1;
+            var cols = scope.CellText.GetLength(1);
+            if (cols <= 0)
+            {
+                if (scope.GridXs == null || scope.GridXs.Count < 2)
+                {
+                    return string.Empty;
+                }
+
+                cols = scope.GridXs.Count - 1;
+            }
+
             var parts = new List<string>(cols);
             for (var c = 0; c < cols; c++)
             {
@@ -1070,6 +1239,28 @@ namespace PosCounter.Net.SpecGrid
             }
 
             return string.Join(", ", parts);
+        }
+
+        /// <summary>Текст заголовка столбца только из строк шапки (не данные).</summary>
+        internal static string BuildHeaderOnlyColumnText(ScopeGridResult result, int col)
+        {
+            if (result?.CellText == null || col < 0 || col >= result.CellText.GetLength(1))
+            {
+                return string.Empty;
+            }
+
+            var parts = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var headerEnd = result.RowDataStart > 0
+                ? result.RowDataStart
+                : ResolveHeaderEndRow(result);
+            var rows = result.CellText.GetLength(0);
+            for (var r = 0; r < headerEnd && r < rows; r++)
+            {
+                AppendHeaderTextPart(parts, seen, result.CellText[r, col] ?? string.Empty);
+            }
+
+            return parts.Count > 0 ? string.Join(" ", parts) : string.Empty;
         }
 
         internal static string FormatColMarkRefineMessage(ScopeGridResult scope)
@@ -1089,15 +1280,193 @@ namespace PosCounter.Net.SpecGrid
         private static void DetectHeader(ScopeGridResult result, SpecGridLog log)
         {
             result.HeaderDetectedByTopTextBand = false;
-            if (DetectHeaderByTopTextBand(result, log))
+            if (DetectHeaderByGridRows(result, log))
             {
                 return;
             }
 
             DetectHeaderByColumns(result, log);
+            if (result.ColMark >= 0 && result.ColQty >= 0)
+            {
+                return;
+            }
+
+            DetectHeaderByTopTextBand(result, log);
         }
 
-        /// <summary>Шапка по верхней полосе текстов maxY−500..maxY, столбец только по X.</summary>
+        /// <summary>Граница шапки/данных: скан строк сетки сверху вниз (единый алгоритм для всех таблиц).</summary>
+        private static void ApplyHeaderBoundaryFromGridScan(ScopeGridResult result, SpecGridLog log)
+        {
+            var firstDataRow = FindFirstDataRowByGridScan(result);
+            if (firstDataRow < 0)
+            {
+                log?.Info(
+                    $"TABLE-GRID: scope={result.ScopeIndex} gridScan: data row not found, HeaderEndRow={result.HeaderEndRow} (H-lines fallback)");
+                return;
+            }
+
+            result.HeaderEndRow = firstDataRow;
+            result.RowDataStart = firstDataRow;
+            log?.Info(
+                $"TABLE-GRID: scope={result.ScopeIndex} gridScan: firstDataRow={firstDataRow} → HeaderEndRow/RowDataStart={firstDataRow}");
+        }
+
+        private static int FindFirstDataRowByGridScan(ScopeGridResult result)
+        {
+            if (result?.CellText == null)
+            {
+                return -1;
+            }
+
+            var rows = result.CellText.GetLength(0);
+            for (var r = 0; r < rows; r++)
+            {
+                if (IsGridScanDataRow(result, r))
+                {
+                    return r;
+                }
+            }
+
+            return -1;
+        }
+
+        private static bool IsGridScanDataRow(ScopeGridResult result, int row)
+        {
+            if (result?.CellText == null || row < 0 || row >= result.CellText.GetLength(0))
+            {
+                return false;
+            }
+
+            var cols = result.CellText.GetLength(1);
+            for (var c = 0; c < cols; c++)
+            {
+                var cell = (result.CellText[row, c] ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(cell))
+                {
+                    continue;
+                }
+
+                if (MTextPlainText.TryParseMarkKey(cell, out _) && !IsHeaderLabelInMarkCell(cell))
+                {
+                    return true;
+                }
+            }
+
+            if (row < GridScanNameDataMinRow)
+            {
+                return false;
+            }
+
+            var hasNameData = false;
+            var hasQtyOrMarkHint = false;
+            for (var c = 0; c < cols; c++)
+            {
+                var cell = (result.CellText[row, c] ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(cell))
+                {
+                    continue;
+                }
+
+                if (MTextPlainText.TryParseMarkKey(cell, out _) && !IsHeaderLabelInMarkCell(cell))
+                {
+                    hasQtyOrMarkHint = true;
+                }
+                else if (CellLooksLikeQtyValue(cell))
+                {
+                    hasQtyOrMarkHint = true;
+                }
+                else if (CellLooksLikeNameData(cell))
+                {
+                    hasNameData = true;
+                }
+            }
+
+            return hasNameData && hasQtyOrMarkHint;
+        }
+
+        private static bool CellLooksLikeNameData(string cell)
+        {
+            var text = MTextPlainText.SanitizeRawContents(cell ?? string.Empty).Trim();
+            if (text.Length < 8 || !MTextPlainText.HasLetter(text))
+            {
+                return false;
+            }
+
+            var lower = text.ToLowerInvariant();
+            if (ScoreHeader(
+                    lower,
+                    "марка", "поз", "поз.", "mark", "п/п", "№", "номер", "item",
+                    "наимен", "name", "назван", "наименование",
+                    "кол", "кол.", "кол-во", "к-во", "масса", "ед") > 0)
+            {
+                return false;
+            }
+
+            return MTextPlainText.NameScore(text) >= 4;
+        }
+
+        private static bool CellLooksLikeQtyValue(string cell)
+        {
+            var t = (cell ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(t) || t.Length > 8)
+            {
+                return false;
+            }
+
+            if (int.TryParse(t, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n))
+            {
+                return n >= 0 && n < 100000;
+            }
+
+            return double.TryParse(
+                t.Replace(',', '.'),
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out var d)
+                && d >= 0
+                && d < 100000;
+        }
+
+        /// <summary>Шапка по строкам сетки 0..HeaderEndRow-1 (primary path).</summary>
+        private static bool DetectHeaderByGridRows(ScopeGridResult result, SpecGridLog log)
+        {
+            var cols = result.GridXs.Count - 1;
+            if (cols <= 0)
+            {
+                result.ColMark = -1;
+                result.ColName = -1;
+                result.ColQty = -1;
+                return false;
+            }
+
+            var headerEnd = ResolveHeaderEndRow(result);
+            if (headerEnd <= 0)
+            {
+                return false;
+            }
+
+            var markScores = new int[cols];
+            var nameScores = new int[cols];
+            var qtyScores = new int[cols];
+
+            for (var c = 0; c < cols; c++)
+            {
+                var header = MTextPlainText.SanitizeRawContents(BuildHeaderOnlyColumnText(result, c)).ToLowerInvariant();
+                markScores[c] = ScoreHeader(header, "марка", "поз", "поз.", "mark", "п/п", "№", "номер", "item");
+                nameScores[c] = ScoreHeader(header, "наимен", "name", "назван", "наименование");
+                qtyScores[c] = ScoreQtyHeader(header);
+            }
+
+            EnsureUniqueHeaderColumns(result, markScores, nameScores, qtyScores, log);
+            SanitizeColQtyColumn(result, qtyScores, log);
+            RefineColMarkByDataMarks(result, markScores, nameScores, qtyScores, log);
+            log?.Info(
+                $"TABLE-GRID: scope={result.ScopeIndex} header cols (grid rows 0..{headerEnd - 1}): MARK={result.ColMark} QTY={result.ColQty} NAME={result.ColName}");
+
+            return result.ColMark >= 0 && result.ColQty >= 0;
+        }
+
+        /// <summary>Fallback: шапка по верхней Y-полосе текстов, столбец по X.</summary>
         private static bool DetectHeaderByTopTextBand(ScopeGridResult result, SpecGridLog log)
         {
             var cols = result.GridXs.Count - 1;
@@ -1118,10 +1487,16 @@ namespace PosCounter.Net.SpecGrid
             var nameScores = new int[cols];
             var qtyScores = new int[cols];
             var bandTextCount = 0;
+            var headerEndRow = ResolveHeaderEndRow(result);
 
             foreach (var t in result.AllTexts ?? new List<TextSample>())
             {
                 if (t == null || t.Y < yLo || t.Y > yHi)
+                {
+                    continue;
+                }
+
+                if (t.Row >= 0 && t.Row >= headerEndRow)
                 {
                     continue;
                 }
@@ -1140,12 +1515,18 @@ namespace PosCounter.Net.SpecGrid
                     continue;
                 }
 
+                if (MTextPlainText.TryParseMarkKey(header, out _))
+                {
+                    continue;
+                }
+
                 markScores[col] += ScoreHeader(header, "марка", "поз", "поз.", "mark", "п/п", "№", "номер", "item");
                 nameScores[col] += ScoreHeader(header, "наимен", "name", "назван", "наименование");
-                qtyScores[col] += ScoreHeader(header, "кол", "qty", "quantity", "кол-во", "к-во", "ед");
+                qtyScores[col] += ScoreQtyHeader(header);
             }
 
             EnsureUniqueHeaderColumns(result, markScores, nameScores, qtyScores, log);
+            SanitizeColQtyColumn(result, qtyScores, log);
             RefineColMarkByDataMarks(result, markScores, nameScores, qtyScores, log);
             log?.Info(
                 $"TABLE-GRID: scope={result.ScopeIndex} HeaderTopBand maxY={result.HeaderTopMaxY:F1} yLo={yLo:F1} texts={bandTextCount} MARK={result.ColMark} QTY={result.ColQty} NAME={result.ColName}");
@@ -1181,10 +1562,11 @@ namespace PosCounter.Net.SpecGrid
                 header = MTextPlainText.SanitizeRawContents(header).ToLowerInvariant();
                 markScores[c] = ScoreHeader(header, "марка", "поз", "поз.", "mark", "п/п", "№", "номер", "item");
                 nameScores[c] = ScoreHeader(header, "наимен", "name", "назван", "наименование");
-                qtyScores[c] = ScoreHeader(header, "кол", "qty", "quantity", "кол-во", "к-во", "ед");
+                qtyScores[c] = ScoreQtyHeader(header);
             }
 
             EnsureUniqueHeaderColumns(result, markScores, nameScores, qtyScores, log);
+            SanitizeColQtyColumn(result, qtyScores, log);
             RefineColMarkByDataMarks(result, markScores, nameScores, qtyScores, log);
             log?.Info(
                 $"TABLE-GRID: scope={result.ScopeIndex} header cols (column fallback): MARK={result.ColMark} QTY={result.ColQty} NAME={result.ColName}");
@@ -1218,7 +1600,7 @@ namespace PosCounter.Net.SpecGrid
                     ScoreHeader(header, "марка", "поз", "поз.", "mark", "п/п", "№", "номер", "item"),
                     Math.Max(
                         ScoreHeader(header, "наимен", "name", "назван", "наименование"),
-                        ScoreHeader(header, "кол", "qty", "quantity", "кол-во", "к-во", "ед")));
+                        ScoreQtyHeader(header)));
                 lines.Add(
                     $"[POSC]   {kind} «{TrimForLog(plain, 24)}» X={t.X:F1} Y={t.Y:F1} → {colLabel} score={score}");
             }
@@ -1262,6 +1644,89 @@ namespace PosCounter.Net.SpecGrid
                 log?.Info(
                     $"TABLE-GRID: scope={result.ScopeIndex} NAME X=[{result.GridXs[result.ColName]:F2}, {result.GridXs[result.ColName + 1]:F2}] QTY X=[{(result.ColQty >= 0 ? result.GridXs[result.ColQty].ToString("F2", CultureInfo.InvariantCulture) : "?")}, {(result.ColQty >= 0 && result.ColQty + 1 < result.GridXs.Count ? result.GridXs[result.ColQty + 1].ToString("F2", CultureInfo.InvariantCulture) : "?")}]");
             }
+        }
+
+        private static void SanitizeColQtyColumn(ScopeGridResult result, int[] qtyScores, SpecGridLog log)
+        {
+            if (result == null || result.ColQty < 0 || qtyScores == null)
+            {
+                return;
+            }
+
+            if (!HeaderTextLooksLikeMassColumn(result, result.ColQty))
+            {
+                return;
+            }
+
+            var badCol = result.ColQty;
+            var taken = new HashSet<int>();
+            if (result.ColMark >= 0)
+            {
+                taken.Add(result.ColMark);
+            }
+
+            taken.Add(badCol);
+            result.ColQty = PickBestHeaderColumn(qtyScores, taken);
+            log?.Warn(
+                $"TABLE-GRID: scope={result.ScopeIndex} ColQty sanitized {badCol} (mass) -> {result.ColQty}");
+        }
+
+        private static bool HeaderTextLooksLikeMassColumn(ScopeGridResult result, int col)
+        {
+            if (result == null || col < 0)
+            {
+                return false;
+            }
+
+            var header = MTextPlainText.SanitizeRawContents(BuildHeaderOnlyColumnText(result, col)).ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(header))
+            {
+                header = MTextPlainText.SanitizeRawContents(BuildHeaderTextForColumn(result, col)).ToLowerInvariant();
+            }
+
+            return header.IndexOf("масса", StringComparison.Ordinal) >= 0
+                || header.IndexOf("масс", StringComparison.Ordinal) >= 0;
+        }
+
+        private static int ScoreQtyHeader(string header)
+        {
+            if (string.IsNullOrWhiteSpace(header))
+            {
+                return 0;
+            }
+
+            var h = header.ToLowerInvariant();
+            var score = 0;
+            if (h.IndexOf("масса", StringComparison.Ordinal) >= 0
+                || h.IndexOf("масс", StringComparison.Ordinal) >= 0
+                || h.IndexOf("обознач", StringComparison.Ordinal) >= 0
+                || h.IndexOf("примеч", StringComparison.Ordinal) >= 0)
+            {
+                score -= 50;
+            }
+
+            if (h.IndexOf("кол.", StringComparison.Ordinal) >= 0
+                || h.IndexOf("кол,", StringComparison.Ordinal) >= 0)
+            {
+                score += 30;
+            }
+            else if (h.IndexOf("кол-во", StringComparison.Ordinal) >= 0
+                || h.IndexOf("к-во", StringComparison.Ordinal) >= 0)
+            {
+                score += 25;
+            }
+            else if (h.IndexOf("кол", StringComparison.Ordinal) >= 0)
+            {
+                score += 20;
+            }
+
+            if (h.IndexOf("qty", StringComparison.Ordinal) >= 0
+                || h.IndexOf("quantity", StringComparison.Ordinal) >= 0)
+            {
+                score += 15;
+            }
+
+            return score;
         }
 
         private static int PickBestHeaderColumn(int[] scores, HashSet<int> excluded)
@@ -1722,7 +2187,7 @@ namespace PosCounter.Net.SpecGrid
             var missing = 0;
             foreach (var kv in result.KeyToRowMark.OrderBy(x => x.Key))
             {
-                var name = ResolveNameFromMergeGroup(result, kv.Key, log, out var joinMeta);
+                var name = ResolveNameForKey(result, kv.Key, log, out var joinMeta);
                 result.MarkNamePairs[kv.Key] = name;
                 if (string.IsNullOrWhiteSpace(name))
                 {
@@ -1821,18 +2286,11 @@ namespace PosCounter.Net.SpecGrid
                 return;
             }
 
-            TryGetHeaderTopTextBandY(result, out _, out _);
-            var yCutoff = result.HeaderTopBandLo;
             var rowCandidates = new Dictionary<int, List<(int Key, TextSample Sample)>>();
 
             foreach (var t in result.AllTexts ?? new List<TextSample>())
             {
-                if (t.Row < 0 || IsSectionHeaderRow(result, t.Row))
-                {
-                    continue;
-                }
-
-                if (yCutoff != 0 && t.DataY >= yCutoff)
+                if (!IsBindableDataText(result, t))
                 {
                     continue;
                 }
@@ -1842,7 +2300,13 @@ namespace PosCounter.Net.SpecGrid
                     continue;
                 }
 
-                if (!MTextPlainText.TryParseMarkKey(t.Raw ?? t.Plain ?? string.Empty, out var key))
+                var raw = t.Raw ?? t.Plain ?? string.Empty;
+                if (!MTextPlainText.TryParseMarkKey(raw, out var key))
+                {
+                    continue;
+                }
+
+                if (t.Col != result.ColMark && raw.Trim().Length > 4)
                 {
                     continue;
                 }
@@ -1910,7 +2374,8 @@ namespace PosCounter.Net.SpecGrid
             foreach (var kv in result.KeyToRowMark)
             {
                 var rowMark = kv.Value;
-                var rowTop = FindRowTopSub(result, horiz, rowMark);
+                var rowTopRaw = FindRowTopSub(result, horiz, rowMark);
+                var rowTop = ResolveNameRowTopForKey(result, kv.Key, rowTopRaw);
                 result.KeyToRowTopSub[kv.Key] = rowTop;
                 var blockEnd = GetMarkBlockEndExclusive(result, rowTop, kv.Key);
                 result.KeyToMarkBlockEnd[kv.Key] = blockEnd;
@@ -1925,12 +2390,18 @@ namespace PosCounter.Net.SpecGrid
             }
         }
 
-        public static string ResolveNameFromMergeGroup(ScopeGridResult grid, int key)
+        /// <summary>Универсальный key/value: имя с верхней строки марки (LINE, native Table, N scopes).</summary>
+        public static string ResolveNameForKey(ScopeGridResult grid, int key)
         {
-            return ResolveNameFromMergeGroup(grid, key, null, out _);
+            return ResolveNameForKey(grid, key, null, out _);
         }
 
-        private static string ResolveNameFromMergeGroup(
+        public static string ResolveNameFromMergeGroup(ScopeGridResult grid, int key)
+        {
+            return ResolveNameForKey(grid, key, null, out _);
+        }
+
+        private static string ResolveNameForKey(
             ScopeGridResult grid,
             int key,
             SpecGridLog log,
@@ -1942,35 +2413,248 @@ namespace PosCounter.Net.SpecGrid
                 return string.Empty;
             }
 
-            var rowTop = grid.KeyToRowTopSub.TryGetValue(key, out var rt) ? rt : rowMark;
+            var rowTop = ResolveNameRowTopForKey(grid, key);
             var markBlockEnd = grid.KeyToMarkBlockEnd.TryGetValue(key, out var be)
                 ? be
                 : GetMarkBlockEndExclusive(grid, rowTop, key);
             var isMerged = markBlockEnd > rowTop + 1 || rowTop < rowMark;
-            // Имя: все строки от верха блока марки до верха следующей непустой марки (3–5+ строк NAME).
             var rowEndExclusive = GetNextKeyRowExclusive(grid, key);
             var boundaryReason = $"nameRows {rowTop}..{rowEndExclusive - 1} markBlockEnd={markBlockEnd} merged={isMerged}";
+            rowEndExclusive = Math.Min(Math.Max(rowEndExclusive, rowTop + 1), ResolveGridRowCount(grid));
 
-            rowEndExclusive = Math.Min(Math.Max(rowEndExclusive, rowTop + 1), grid.GridYs.Count);
+            var cellParts = new List<string>();
+            CollectNamePartsFromCellText(grid, key, rowTop, rowEndExclusive, cellParts);
 
-            var parts = new List<string>();
-            var textCount = CollectNamePartsForPositionRange(grid, key, rowTop, rowEndExclusive, parts, log);
-            textCount += SupplementNamePartsInVerticalBand(grid, key, rowTop, rowEndExclusive, parts, log);
+            var cellJoined = string.Join(" ", cellParts).Trim();
+            var textParts = new List<string>();
+            var textCount = 0;
+            var useCellTextOnly = cellJoined.Length >= CellTextOnlyNameMinLength;
+            if (!grid.IsNativeAcadTable && grid.GridYs != null && grid.GridYs.Count >= 2 && !useCellTextOnly)
+            {
+                textCount = CollectNamePartsForPositionRange(grid, key, rowTop, rowEndExclusive, textParts, log);
+                textCount += SupplementNamePartsInVerticalBand(grid, key, rowTop, rowEndExclusive, textParts, log);
+                textParts = FilterTextPartsNotInCellText(textParts, cellJoined);
+            }
+            else if (useCellTextOnly && log != null)
+            {
+                log.Info($"[NAME-DEDUPE] scope={grid.ScopeIndex} key={key} reason=cell-only len={cellJoined.Length}");
+            }
 
+            var parts = useCellTextOnly
+                ? cellParts
+                : MergeNamePartsPreferCellText(cellParts, textParts);
             var rowEndInclusive = rowEndExclusive > rowTop ? rowEndExclusive - 1 : rowTop;
             meta = new NameJoinMeta(rowTop, rowEndInclusive, parts.Count, rowEndExclusive, boundaryReason, textCount);
 
-            var shouldLogBoundary = parts.Count == 0 || key == 1 || key == 4 || key == 5 || key == 45 || key == 52 || key == 98
-                || key <= 10 || key == 51 || key == 57 || key == 70
-                || key == 104 || key == 105 || key >= 53 && key <= 56 || key >= 106 && key <= 109;
-            var joined = MTextPlainText.FormatForPaletteDisplay(string.Join(" ", parts).Trim());
-            if (log != null && shouldLogBoundary)
+            var joined = CollapseDuplicateNamePhrase(
+                MTextPlainText.FormatForPaletteDisplay(string.Join(" ", parts).Trim()));
+            if (string.IsNullOrWhiteSpace(joined))
+            {
+                var cellAtMark = GetTrimmedNameAtRow(grid, rowMark);
+                var path = grid.IsNativeAcadTable ? "Table" : "LINE";
+                log?.Info(
+                    $"[KV-ANCHOR] scope={grid.ScopeIndex} key={key} rowMark={rowMark} rowTop={rowTop} cellName=\"{TrimForLog(cellAtMark, 40)}\" path={path}");
+                if (!string.IsNullOrWhiteSpace(cellAtMark))
+                {
+                    joined = CollapseDuplicateNamePhrase(MTextPlainText.FormatForPaletteDisplay(cellAtMark));
+                }
+                else
+                {
+                    joined = CollapseDuplicateNamePhrase(ResolveNameFromNeighborColumns(grid, rowMark));
+                }
+            }
+
+            var shouldLogBoundary = parts.Count == 0 || key == 1 || key <= 10 || key == 45 || key == 52 || key == 98
+                || key == 51 || key == 57 || key == 70 || key == 104 || key == 105
+                || key >= 53 && key <= 56 || key >= 106 && key <= 109;
+            if (log != null && shouldLogBoundary && !string.IsNullOrWhiteSpace(joined))
             {
                 log.Info(
                     $"[NAME-BOUNDARY] scope={grid.ScopeIndex} key={key} rowTop={rowTop} rowMark={rowMark} merged={isMerged} rowEndEx={rowEndExclusive} reason={boundaryReason} parts={parts.Count} texts={textCount} value=\"{TrimForLog(joined, 80)}\"");
             }
 
             return joined;
+        }
+
+        /// <summary>Верхняя строка блока марки: не шапка, не секция без марки.</summary>
+        private static int ResolveNameRowTopForKey(ScopeGridResult grid, int key, int? rawRowTop = null)
+        {
+            if (!grid.KeyToRowMark.TryGetValue(key, out var rowMark))
+            {
+                return 0;
+            }
+
+            var rowTop = rawRowTop
+                ?? (grid.KeyToRowTopSub.TryGetValue(key, out var rt) ? rt : rowMark);
+            rowTop = Math.Max(rowTop, ResolveHeaderEndRow(grid));
+            if (grid.RowDataStart > 0)
+            {
+                rowTop = Math.Max(rowTop, grid.RowDataStart);
+            }
+
+            while (rowTop < rowMark && IsSectionHeaderRow(grid, rowTop))
+            {
+                rowTop++;
+            }
+
+            return rowTop;
+        }
+
+        private static void CollectNamePartsFromCellText(
+            ScopeGridResult grid,
+            int key,
+            int rowTop,
+            int rowEndExclusive,
+            List<string> parts)
+        {
+            if (grid?.CellText == null || grid.ColName < 0)
+            {
+                return;
+            }
+
+            var rows = grid.CellText.GetLength(0);
+            for (var r = rowTop; r < rowEndExclusive && r < rows; r++)
+            {
+                var rowKey = ResolveMarkKeyAtRow(grid, r);
+                if (rowKey > 0 && rowKey != key)
+                {
+                    continue;
+                }
+
+                if (IsSectionHeaderRow(grid, r))
+                {
+                    continue;
+                }
+
+                var text = GetTrimmedNameAtRow(grid, r);
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    TryAddNamePartExact(parts, text);
+                }
+            }
+        }
+
+        private static List<string> FilterTextPartsNotInCellText(List<string> textParts, string cellJoined)
+        {
+            if (textParts == null || textParts.Count == 0)
+            {
+                return textParts ?? new List<string>();
+            }
+
+            if (string.IsNullOrWhiteSpace(cellJoined))
+            {
+                return textParts;
+            }
+
+            var filtered = new List<string>();
+            foreach (var p in textParts)
+            {
+                var t = (p ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(t))
+                {
+                    continue;
+                }
+
+                if (cellJoined.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0
+                    || t.IndexOf(cellJoined, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    continue;
+                }
+
+                filtered.Add(t);
+            }
+
+            return filtered;
+        }
+
+        private static string CollapseDuplicateNamePhrase(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return string.Empty;
+            }
+
+            text = text.Trim();
+            if (text.Length < 10)
+            {
+                return text;
+            }
+
+            for (var sep = 0; sep <= 2; sep++)
+            {
+                var len = text.Length;
+                var aLen = (len - sep) / 2;
+                if (aLen < 5)
+                {
+                    continue;
+                }
+
+                var bStart = aLen + sep;
+                if (bStart + aLen > len)
+                {
+                    continue;
+                }
+
+                var a = text.Substring(0, aLen).Trim();
+                var b = text.Substring(bStart, aLen).Trim();
+                if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase))
+                {
+                    return a;
+                }
+            }
+
+            return text;
+        }
+
+        private static string ResolveNameFromNeighborColumns(ScopeGridResult grid, int rowMark)
+        {
+            if (grid?.CellText == null || grid.ColName < 0 || rowMark < 0 || rowMark >= grid.CellText.GetLength(0))
+            {
+                return string.Empty;
+            }
+
+            var cols = grid.CellText.GetLength(1);
+            foreach (var dc in new[] { -1, 1 })
+            {
+                var c = grid.ColName + dc;
+                if (c < 0 || c >= cols)
+                {
+                    continue;
+                }
+
+                var text = (grid.CellText[rowMark, c] ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    continue;
+                }
+
+                if (MTextPlainText.TryParseMarkKey(text, out _))
+                {
+                    continue;
+                }
+
+                return MTextPlainText.FormatForPaletteDisplay(text);
+            }
+
+            return string.Empty;
+        }
+
+        private static List<string> MergeNamePartsPreferCellText(List<string> cellParts, List<string> textParts)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var merged = new List<string>();
+            foreach (var p in cellParts.Concat(textParts))
+            {
+                var t = (p ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(t) || !seen.Add(t))
+                {
+                    continue;
+                }
+
+                merged.Add(t);
+            }
+
+            return merged;
         }
 
         /// <summary>Верхняя граница следующей позиции (rowTopSub), чтобы не захватывать её имя.</summary>
@@ -2509,7 +3193,7 @@ namespace PosCounter.Net.SpecGrid
             }
 
             var name = GetTrimmedNameAtRow(grid, row);
-            if (string.IsNullOrWhiteSpace(name) || name.Length < 25 || !MTextPlainText.HasLetter(name))
+            if (string.IsNullOrWhiteSpace(name) || name.Length < 8 || !MTextPlainText.HasLetter(name))
             {
                 return false;
             }
@@ -3213,6 +3897,235 @@ namespace PosCounter.Net.SpecGrid
             return new Extents3d(
                 new Point3d(Math.Min(a.MinPoint.X, b.MinPoint.X), Math.Min(a.MinPoint.Y, b.MinPoint.Y), 0),
                 new Point3d(Math.Max(a.MaxPoint.X, b.MaxPoint.X), Math.Max(a.MaxPoint.Y, b.MaxPoint.Y), 0));
+        }
+
+        private static ScopeGridResult BuildFromAcadTable(
+            int scopeIndex,
+            Table table,
+            IReadOnlyList<ObjectId> objectIds,
+            Transaction tr,
+            SpecGridLog log)
+        {
+            var result = new ScopeGridResult
+            {
+                ScopeIndex = scopeIndex,
+                IsNativeAcadTable = true,
+                NativeTableId = table.ObjectId
+            };
+
+            var rows = (int)table.Rows.Count;
+            var cols = (int)table.Columns.Count;
+            if (rows <= 0 || cols <= 0)
+            {
+                log.Warn($"TABLE-GRID: scope={scopeIndex} native Table empty ({rows}x{cols})");
+                return result;
+            }
+
+            if (rows * cols > MaxCells)
+            {
+                log.Warn($"TABLE-GRID: scope={scopeIndex} native Table cells>{MaxCells}");
+                return result;
+            }
+
+            result.CellText = new string[rows, cols];
+            for (var r = 0; r < rows; r++)
+            {
+                for (var c = 0; c < cols; c++)
+                {
+                    result.CellText[r, c] = GetAcadTableCellText(table, r, c);
+                }
+            }
+
+            result.RowDataEnd = rows - 1;
+            result.HeaderEndRow = Math.Min(HeaderScanMaxRow + 1, rows);
+            DetectHeaderFromCellMatrix(result, log);
+            result.RowDataStart = FindFirstMarkRowInCellMatrix(result);
+            if (result.RowDataStart > 0)
+            {
+                result.HeaderEndRow = result.RowDataStart;
+            }
+
+            BindKeysFromAcadTableCellMatrix(result, table, log);
+            FillMarkNamesFromAcadTableCells(result, log);
+
+            result.PickedObjectIds = objectIds.Where(id => !id.IsNull && id.IsValid).Distinct().ToList();
+            if (!table.OwnerId.IsNull)
+            {
+                result.OwnerBlockId = table.OwnerId;
+            }
+
+            result.Valid = result.ColMark >= 0 && result.KeyToRowMark.Count > 0;
+            log.Info(
+                $"TABLE-GRID: scope={scopeIndex} native AcadTable {rows}x{cols} MARK={result.ColMark} NAME={result.ColName} QTY={result.ColQty} keys={result.KeyToRowMark.Count}");
+            return result;
+        }
+
+        private static string GetAcadTableCellText(Table table, int row, int col)
+        {
+            try
+            {
+                return MTextPlainText.SanitizeRawContents(table.Cells[row, col].TextString ?? string.Empty);
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private static void DetectHeaderFromCellMatrix(ScopeGridResult result, SpecGridLog log)
+        {
+            if (result?.CellText == null)
+            {
+                return;
+            }
+
+            var rows = result.CellText.GetLength(0);
+            var colCount = result.CellText.GetLength(1);
+            if (colCount <= 0)
+            {
+                return;
+            }
+
+            var markScores = new int[colCount];
+            var nameScores = new int[colCount];
+            var qtyScores = new int[colCount];
+            var headerRows = Math.Min(HeaderScanMaxRow + 1, rows);
+
+            for (var r = 0; r < headerRows; r++)
+            {
+                for (var c = 0; c < colCount; c++)
+                {
+                    var header = MTextPlainText.SanitizeRawContents(result.CellText[r, c] ?? string.Empty)
+                        .ToLowerInvariant();
+                    if (string.IsNullOrWhiteSpace(header))
+                    {
+                        continue;
+                    }
+
+                    markScores[c] += ScoreHeader(header, "марка", "поз", "поз.", "mark", "п/п", "№", "номер", "item");
+                    nameScores[c] += ScoreHeader(header, "наимен", "name", "назван", "наименование");
+                    qtyScores[c] += ScoreQtyHeader(header);
+                }
+            }
+
+            EnsureUniqueHeaderColumns(result, markScores, nameScores, qtyScores, log);
+            SanitizeColQtyColumn(result, qtyScores, log);
+            RefineColMarkByDataMarks(result, markScores, nameScores, qtyScores, log);
+            log?.Info(
+                $"TABLE-GRID: scope={result.ScopeIndex} native header cols: MARK={result.ColMark} QTY={result.ColQty} NAME={result.ColName}");
+        }
+
+        private static int FindFirstMarkRowInCellMatrix(ScopeGridResult result)
+        {
+            if (result?.CellText == null || result.ColMark < 0)
+            {
+                return 0;
+            }
+
+            var rows = result.CellText.GetLength(0);
+            for (var r = 0; r < rows; r++)
+            {
+                var mark = result.CellText[r, result.ColMark] ?? string.Empty;
+                if (MTextPlainText.TryParseMarkKey(mark, out _))
+                {
+                    return r;
+                }
+            }
+
+            return Math.Min(1, rows - 1);
+        }
+
+        private static void BindKeysFromAcadTableCellMatrix(ScopeGridResult result, Table table, SpecGridLog log)
+        {
+            result.KeyToRowMark.Clear();
+            result.RowToKeyMark.Clear();
+            result.KeyToRowTopSub.Clear();
+            result.KeyToMarkBlockEnd.Clear();
+            if (result.ColMark < 0 || result.CellText == null)
+            {
+                return;
+            }
+
+            var rows = result.CellText.GetLength(0);
+            for (var r = result.RowDataStart; r < rows; r++)
+            {
+                if (IsSectionHeaderRow(result, r))
+                {
+                    continue;
+                }
+
+                var cell = result.CellText[r, result.ColMark] ?? string.Empty;
+                if (!MTextPlainText.TryParseMarkKey(cell, out var key))
+                {
+                    continue;
+                }
+
+                BindKeyToRow(result, key, r);
+                result.RowToKeyMark[r] = key;
+
+                var rowTopRaw = r;
+                TryGetAcadTableMergeTopRow(table, r, result.ColMark, out rowTopRaw);
+                result.KeyToRowTopSub[key] = ResolveNameRowTopForKey(result, key, rowTopRaw);
+                log.Debug($"TABLE-GRID: scope={result.ScopeIndex} native bind key={key} row={r} rowTop={result.KeyToRowTopSub[key]}");
+            }
+
+            foreach (var key in result.KeyToRowMark.Keys.ToList())
+            {
+                var rowTop = result.KeyToRowTopSub.TryGetValue(key, out var rt) ? rt : result.KeyToRowMark[key];
+                result.KeyToMarkBlockEnd[key] = GetMarkBlockEndExclusive(result, rowTop, key);
+            }
+        }
+
+        private static void FillMarkNamesFromAcadTableCells(ScopeGridResult result, SpecGridLog log)
+        {
+            result.MarkNamePairs.Clear();
+            if (result.ColMark < 0 || result.CellText == null)
+            {
+                return;
+            }
+
+            log.Info(
+                $"TABLE-ROWS: scope={result.ScopeIndex} native startRow={result.RowDataStart} colMark={result.ColMark} colName={result.ColName}");
+            var missing = 0;
+            foreach (var kv in result.KeyToRowMark.OrderBy(x => x.Key))
+            {
+                var key = kv.Key;
+                var joined = ResolveNameForKey(result, key, log, out _);
+                result.MarkNamePairs[key] = joined;
+                if (string.IsNullOrWhiteSpace(joined))
+                {
+                    missing++;
+                    log.Info($"TABLE-ROWS: key={key} → name=\"\" MISSING_NAME");
+                }
+                else
+                {
+                    log.Info($"TABLE-ROWS: key={key} → name=\"{joined}\" (native-table)");
+                    log.Info($"[KV-PAIR] scope={result.ScopeIndex} key={key} value=\"{TrimForLog(joined, 80)}\"");
+                }
+            }
+
+            log.Success(
+                $"TABLE-ROWS: scope={result.ScopeIndex} native pairs={result.MarkNamePairs.Count} missingName={missing}");
+        }
+
+        private static bool TryGetAcadTableMergeTopRow(Table table, int row, int col, out int topRow)
+        {
+            topRow = row;
+            if (table == null || row < 0 || col < 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                var range = table.Cells[row, col].GetMergeRange();
+                topRow = range.TopRow;
+                return true;
+            }
+            catch
+            {
+                return true;
+            }
         }
     }
 }

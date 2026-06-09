@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.Colors;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -132,6 +133,22 @@ namespace PosCounter.Net.SpecGrid
                 }
 
                 var scopeNum = scope.ScopeIndex + 1;
+                if (scope.IsNativeAcadTable)
+                {
+                    var rows = scope.CellText?.GetLength(0) ?? 0;
+                    var cols = scope.CellText?.GetLength(1) ?? 0;
+                    SpecGridLog.WriteCommandLine(
+                        doc,
+                        $"[POSC] Таблица AutoCAD ({rows}×{cols} ячеек), источник=Table");
+                }
+
+                if (scope.MixedTableLineSelection)
+                {
+                    SpecGridLog.WriteCommandLine(
+                        doc,
+                        "[POSC] Mixed selection (Table + Line), using LINE path");
+                }
+
                 var mark = DescribeHeaderColumn(scope, scope.ColMark);
                 var name = DescribeHeaderColumn(scope, scope.ColName);
                 var qty = DescribeHeaderColumn(scope, scope.ColQty);
@@ -142,10 +159,36 @@ namespace PosCounter.Net.SpecGrid
                     $"Кол. — {(scope.ColQty >= 0 ? $"столбец {scope.ColQty} «{qty}»" : "не найдена")}.";
                 SpecGridLog.WriteCommandLine(doc, msg);
 
+                if (scope.HeaderEndRow > 0 || scope.RowDataStart > 0)
+                {
+                    SpecGridLog.WriteCommandLine(
+                        doc,
+                        $"[POSC] Граница шапки/данных: HeaderEndRow={scope.HeaderEndRow} RowDataStart={scope.RowDataStart}");
+                }
+
                 var refineMsg = TableGridBuilder.FormatColMarkRefineMessage(scope);
                 if (!string.IsNullOrWhiteSpace(refineMsg))
                 {
                     SpecGridLog.WriteCommandLine(doc, refineMsg);
+                }
+
+                if (scope.Valid && scope.ColMark >= 0)
+                {
+                    var markCounts = TableGridBuilder.FormatDataMarkCountsDiagnostic(scope);
+                    if (!string.IsNullOrWhiteSpace(markCounts))
+                    {
+                        SpecGridLog.WriteCommandLine(
+                            doc,
+                            $"[POSC] Марок в данных по столбцам: {markCounts} (ColMark={scope.ColMark})");
+                    }
+
+                    if (scope.KeyToRowMark.Count > 0)
+                    {
+                        var keyMap = string.Join(
+                            ", ",
+                            scope.KeyToRowMark.OrderBy(x => x.Key).Select(x => $"{x.Key}→row{x.Value}"));
+                        SpecGridLog.WriteCommandLine(doc, $"[POSC] KeyToRowMark: {keyMap}");
+                    }
                 }
 
                 if (!scope.Valid)
@@ -225,7 +268,12 @@ namespace PosCounter.Net.SpecGrid
                 return "—";
             }
 
-            var s = MTextPlainText.SanitizeRawContents(TableGridBuilder.BuildHeaderTextForColumn(scope, col));
+            var s = MTextPlainText.SanitizeRawContents(TableGridBuilder.BuildHeaderOnlyColumnText(scope, col));
+            if (string.IsNullOrWhiteSpace(s))
+            {
+                s = MTextPlainText.SanitizeRawContents(TableGridBuilder.BuildHeaderTextForColumn(scope, col));
+            }
+
             if (string.IsNullOrWhiteSpace(s))
             {
                 return "—";
@@ -255,7 +303,16 @@ namespace PosCounter.Net.SpecGrid
 
             foreach (var key in scope.KeyToRowMark.Keys)
             {
-                var merged = TableGridBuilder.ResolveNameFromMergeGroup(scope, key);
+                string merged = null;
+                if (scope.MarkNamePairs.TryGetValue(key, out var cached) && !string.IsNullOrWhiteSpace(cached))
+                {
+                    merged = cached;
+                }
+                else
+                {
+                    merged = TableGridBuilder.ResolveNameForKey(scope, key);
+                }
+
                 if (string.IsNullOrWhiteSpace(merged))
                 {
                     continue;
@@ -385,6 +442,11 @@ namespace PosCounter.Net.SpecGrid
                 return 0;
             }
 
+            if (scope.IsNativeAcadTable)
+            {
+                return WriteQtyScopeNativeTable(tr, scope, qtyByKey, log, ref skipped);
+            }
+
             var btr = ResolveOwnerBlock(tr, scope);
             if (btr == null)
             {
@@ -431,6 +493,127 @@ namespace PosCounter.Net.SpecGrid
             }
 
             return written;
+        }
+
+        private static int WriteQtyScopeNativeTable(
+            Transaction tr,
+            ScopeGridResult scope,
+            IReadOnlyDictionary<int, int> qtyByKey,
+            SpecGridLog log,
+            ref int skipped)
+        {
+            if (scope.NativeTableId.IsNull || !scope.NativeTableId.IsValid)
+            {
+                return 0;
+            }
+
+            Table table;
+            try
+            {
+                table = tr.GetObject(scope.NativeTableId, OpenMode.ForWrite, false) as Table;
+            }
+            catch
+            {
+                return 0;
+            }
+
+            if (table == null)
+            {
+                return 0;
+            }
+
+            var appearance = ResolveQtyTableTextAppearanceForScope(tr, scope);
+            var written = 0;
+            foreach (var key in scope.KeyToRowTopSub.Keys.OrderBy(k => k))
+            {
+                if (!qtyByKey.TryGetValue(key, out var qty))
+                {
+                    continue;
+                }
+
+                if (!scope.KeyToRowTopSub.TryGetValue(key, out var rowTop))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                var col = scope.ColQty;
+                var tableRows = (int)table.Rows.Count;
+                var tableCols = (int)table.Columns.Count;
+                if (rowTop < 0 || col < 0 || rowTop >= tableRows || col >= tableCols)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                try
+                {
+                    UpsertQtyInAcadTable(table, scope, rowTop, col, qty, appearance, log, scope.ScopeIndex, key);
+                    written++;
+                }
+                catch
+                {
+                    skipped++;
+                }
+            }
+
+            return written;
+        }
+
+        private static void UpsertQtyInAcadTable(
+            Table table,
+            ScopeGridResult scope,
+            int rowTop,
+            int col,
+            int qty,
+            QtyTableTextAppearance appearance,
+            SpecGridLog log,
+            int scopeIndex,
+            int key)
+        {
+            var current = ReadAcadTableCellText(table, rowTop, col);
+            var newText = ReplaceQtyNumberInCellText(current, qty);
+            table.Cells[rowTop, col].TextString = newText;
+            if (scope.CellText != null
+                && rowTop < scope.CellText.GetLength(0)
+                && col < scope.CellText.GetLength(1))
+            {
+                scope.CellText[rowTop, col] = newText;
+            }
+
+            log.Debug($"QTY-WRITE: scope={scopeIndex} key={key} native-table row={rowTop} col={col} text=\"{newText}\"");
+        }
+
+        private static string ReadAcadTableCellText(Table table, int row, int col)
+        {
+            try
+            {
+                return MTextPlainText.SanitizeRawContents(table.Cells[row, col].TextString ?? string.Empty);
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        /// <summary>Заменить только числовую часть («5 шт.» → «12 шт.»).</summary>
+        private static string ReplaceQtyNumberInCellText(string cellText, int qty)
+        {
+            var qtyText = qty.ToString(CultureInfo.InvariantCulture);
+            if (string.IsNullOrWhiteSpace(cellText))
+            {
+                return qtyText;
+            }
+
+            var match = Regex.Match(cellText, @"\d+(?:[.,]\d+)?");
+            if (!match.Success)
+            {
+                return qtyText;
+            }
+
+            return cellText.Substring(0, match.Index)
+                + qtyText
+                + cellText.Substring(match.Index + match.Length);
         }
 
         private static BlockTableRecord ResolveOwnerBlock(Transaction tr, ScopeGridResult scope)
@@ -1176,15 +1359,16 @@ namespace PosCounter.Net.SpecGrid
 
                 if (scope.KeyToRowMark.Count == 0)
                 {
+                    var markColLabel = scope.ColMark >= 0 ? $"столбец {scope.ColMark}" : "не найден";
                     SpecGridLog.WriteCommandLine(
                         doc,
-                        "[POSC] Заполните колонку «Марка» (Поз.) в таблице — иначе «Кол.» не запишется.");
+                        $"[POSC] Марки в данных не найдены (ColMark={markColLabel}, RowDataStart={scope.RowDataStart}) — проверьте цифры в «Поз.».");
                     var markCounts = TableGridBuilder.FormatDataMarkCountsDiagnostic(scope);
                     if (!string.IsNullOrWhiteSpace(markCounts))
                     {
                         SpecGridLog.WriteCommandLine(
                             doc,
-                            $"[POSC] Марок в данных (как BindKeys) по столбцам: {markCounts} (ColMark={scope.ColMark})");
+                            $"[POSC] Марок в данных по столбцам: {markCounts}");
                     }
                 }
             }

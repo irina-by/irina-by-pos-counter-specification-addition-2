@@ -129,3 +129,19 @@
 > [2026-06-09] Задача: упростить чтение `Работа программы.md`.
 > Правка: под каждый вопрос добавлен блок **«Проще»** (1–3 предложения); в конце раздел **«Кратко: как всё работает»** — пошагово шаг 1–3, схема key/value, два прохода имени, чеклист.
 > Результат: ДОКУМЕНТАЦИЯ — код не менялся.
+
+> [2026-06-09] Задача: план diagnose_spec_failure — фаза 1 (Y-cutoff LINE) + фаза 2 (явная AutoCAD Table).
+> Правка: `TableGrid.cs` — `ResolveDataYCutoff`, `IsBindableDataText`, `BuildFromAcadTable`, …; `SpecGridService.cs` — `UpsertQtyInAcadTable`, CMD. Docs.
+> Результат: СБОРКА net8.0-windows OK (0 errors), `dll 2026\PosCounter.Net.dll` обновлена; ручной тест — ожидает инженера (NETLOAD).
+
+> [2026-06-09] Задача: универсальный key/value — имя с верхней строки марки (план fix_mark_1_name_kv).
+> Правка: `ResolveNameForKey`, `ResolveNameRowTopForKey`, `CollectNamePartsFromCellText`; `IsSectionHeaderRow` порог 25→8; `BindKeys`/`BindKeysFromAcadTableCellMatrix` cap rowTop; `FillMarkNames*` + `MergeScopeNames` через `ResolveNameForKey`; CMD `[KV-ANCHOR]`. Docs.
+> Результат: СБОРКА net8.0-windows OK (0 errors), `dll 2026\PosCounter.Net.dll` обновлена; ручной тест — Ушко LINE+MText (марка 1), секция без марки, 35NK, _tex_fek — ожидает инженера (NETLOAD).
+
+> [2026-06-09] Задача: план fix_header_colqty_bleed — ColQty на «Масса» (Ушко), data bleed в шапку, дубль имён MText+MText (_tex_fek mark 64).
+> Правка: `ScoreQtyHeader` (без «ед», штраф масса), `SanitizeColQtyColumn`; `TryGetHeaderTopTextBandY` 35% для малых таблиц; skip data marks в header scoring; `HeaderEndRow` cap + `BuildHeaderOnlyColumnText` до RowDataStart; `ResolveNameForKey` cell-only/filter/collapse; `TryAddNamePartExact`; `IsDuplicateCandidate` near-overlap; CMD `[POSC] Марок в данных`, `KeyToRowMark`. Docs + plan `fix_header_colqty_bleed_implementation.md`.
+> Результат: СБОРКА net8.0-windows OK (0 errors), `dll 2026\PosCounter.Net.dll` обновлена; ручной тест — Ушко (ColQty=«Кол.», марки 1–4), _tex_fek mark 64 без дубля, 35NK — ожидает инженера (NETLOAD).
+
+> [2026-06-09] Задача: план unified_grid_header_scan — откат деления «малая/большая таблица» (35% vs 2000 мм).
+> Правка: `ApplyHeaderBoundaryFromGridScan`, `FindFirstDataRowByGridScan`, `DetectHeaderByGridRows` (primary); `DetectHeader` порядок grid→columns→top-band; удалён `SmallTableHeaderBandFraction`; top-band fallback с фильтром `Row < HeaderEndRow`; CMD `[POSC] Граница шапки/данных`. Docs.
+> Результат: СБОРКА net8.0-windows OK (0 errors), `dll 2026\PosCounter.Net.dll` обновлена; ручной тест — Ушко, _tex_fek mark 64, 35NK (NETLOAD).

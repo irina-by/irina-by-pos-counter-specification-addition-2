@@ -65,6 +65,18 @@ namespace PosCounter.Net.SpecGrid
             int row,
             int col)
         {
+            return GetCellText(samples, log, scopeIndex, row, col, false);
+        }
+
+        /// <param name="preferMarkColumn">ColMark: приоритет коротким цифрам-маркам.</param>
+        public static string GetCellText(
+            IEnumerable<TextSample> samples,
+            SpecGridLog log,
+            int scopeIndex,
+            int row,
+            int col,
+            bool preferMarkColumn)
+        {
             var list = samples?.ToList() ?? new List<TextSample>();
             if (list.Count == 0)
             {
@@ -94,7 +106,18 @@ namespace PosCounter.Net.SpecGrid
                 return string.Empty;
             }
 
-            // log [CELL-PICK] отключён
+            if (preferMarkColumn)
+            {
+                var markHits = candidates
+                    .Where(c => MTextPlainText.TryParseMarkKey(c.Plain, out _))
+                    .OrderBy(c => c.Plain.Trim().Length)
+                    .ThenByDescending(c => c.Sample.DataY)
+                    .ToList();
+                if (markHits.Count > 0)
+                {
+                    return markHits[0].Plain;
+                }
+            }
 
             var best = candidates
                 .OrderByDescending(c => c.Score)
@@ -113,6 +136,13 @@ namespace PosCounter.Net.SpecGrid
             foreach (var c in candidates)
             {
                 if (string.Equals(c.Plain, plain, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                var overlapX = Math.Abs(c.Sample.X - t.X) <= TextOverlapEps * 4;
+                var overlapY = Math.Abs(c.Sample.Y - t.Y) <= TextOverlapEps * 4;
+                if (overlapX && overlapY)
                 {
                     return true;
                 }

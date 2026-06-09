@@ -137,7 +137,29 @@ PosCounter.Net/
 
 ## 8. `TableGridBuilder.Build()` — порядок шагов
 
-### Фаза A — сбор и сетка
+### Выбор пути (начало Build)
+
+| Условие выборки | Путь |
+|-----------------|------|
+| есть `Table`, нет `Line` | **`BuildFromAcadTable`** |
+| есть `Line` (с Table или без) | LINE path (см. ниже) |
+| Table + Line вместе | WARN `[POSC] Mixed selection…`, LINE path |
+
+### Путь AutoCAD Table — `BuildFromAcadTable`
+
+1. `CellText[r,c]` ← `table.Cells[r,c].TextString`.
+2. `DetectHeaderFromCellMatrix` — те же `ScoreHeader`, `EnsureUniqueHeaderColumns`, `RefineColMarkByDataMarks`.
+3. `RowDataStart` — первая строка с `TryParseMarkKey` в ColMark.
+4. `BindKeysFromAcadTableCellMatrix` — KeyToRowMark по индексу строки (без Y-cutoff, без dual-pass).
+5. Merged cells — `Cells[r,c].GetMergeRange()` → `KeyToRowTopSub`.
+6. `FillMarkNamesFromAcadTableCells` — имена только из CellText.
+7. `IsNativeAcadTable=true`, `NativeTableId`.
+
+**Не вызываются:** `AssignCellsData`, `SplitNameColumnRowsData`, `BindKeysFromProperties`, `FillMarkNamesFromMergeGroups`.
+
+**Запись «Кол.»:** `SpecGridService.UpsertQtyInAcadTable` — только ячейка Table; число заменяется в «5 шт.» → «12 шт.».
+
+### Фаза A — LINE path: сбор и сетка
 
 1. Чтение LINE → `GridLineSeg`; TEXT/MTEXT → `TextSample`.
 2. `AutoDetectGridLayer` — слой ≥30% кандидатов (`MinGridLineLen=5000` для выбора слоя).
@@ -174,10 +196,16 @@ PosCounter.Net/
 
 | Метод | Условие срабатывания | Результат |
 |-------|----------------------|-----------|
-| `TryGetHeaderTopTextBandY` | есть тексты в выборке | полоса maxY−2000..maxY |
-| `DetectHeaderByTopTextBand` | тексты в полосе | ColMark/ColName/ColQty по X |
+| `TryGetHeaderTopTextBandY` | есть тексты (fallback CMD) | полоса maxY−2000..maxY — **одинаково для всех таблиц** |
+| `ApplyHeaderBoundaryFromGridScan` | после pass-1 CellText | скан строк 0..N: первая строка с маркой или наименованием-данными → `HeaderEndRow`/`RowDataStart` |
+| `DetectHeaderByGridRows` | primary | scoring ColMark/ColName/ColQty только по строкам `0 .. HeaderEndRow-1` |
+| `DetectHeaderByColumns` | fallback | `BuildHeaderTextForColumn` + GridYs |
+| `DetectHeaderByTopTextBand` | last-resort | Y-полоса + фильтр `Row < HeaderEndRow`, без цифр-марок |
+| `ScoreQtyHeader` | scoring «Кол.» | `кол.` +30, `кол` +20; **без** «ед»; штраф −50 для «масса»/«обознач»/«примеч» |
+| `SanitizeColQtyColumn` | ColQty похож на «Масса» | repick ColQty по qtyScores |
 | `EnsureUniqueHeaderColumns` | после detect | уникальные роли столбцов |
 | `RefineColMarkByDataMarks` | ColMark < 2 марок в data | смена ColMark по цифрам |
+| `BuildHeaderOnlyColumnText` | диагностика / sanitize | только строки `r < RowDataStart` |
 
 ### Fallback
 
@@ -187,24 +215,28 @@ PosCounter.Net/
 | `CollectHeaderTextForColumn` | проходы A (Row/Col), B (geom), C (CellText) |
 | `PickBestHeaderColumn` | score ≥ MinHeaderScore(10) |
 
-### Токены score (`ScoreHeader`)
+### Токены score
 
 - Марка: поз, п/п, №, номер…
 - Наименование: наимен, назван…
-- Кол.: кол, колич, к-во, ед…
+- Кол.: **`ScoreQtyHeader`** — кол., кол-во, qty; **не** «ед» (ложное совпадение с «Масса **ед**., кг»)
 
-**CMD:** `ReportDetectedHeader`, `BuildHeaderTopBandDiagnostic`, `BuildHeaderExtendedDiagnostic`.
+**CMD:** `ReportDetectedHeader` (+ `[POSC] Марок в данных по столбцам`, `[POSC] KeyToRowMark`), `BuildHeaderTopBandDiagnostic`, `BuildHeaderExtendedDiagnostic`.
 
 ---
 
-## 10. Ключ (марка) — `BindKeysFromProperties`
+## 10. Ключ (марка) — `BindKeysFromProperties` (LINE path)
 
-**Условия включения текста в кандидаты:**
+**Условия включения текста в кандидаты (`IsBindableDataText`):**
 
 - `t.Row >= 0`, не `IsSectionHeaderRow`.
-- `DataY < HeaderTopBandLo` (ниже шапки).
+- **Основной фильтр:** `t.Row >= RowDataStart` (если `RowDataStart > 0`).
+- **Запасной:** `DataY < ResolveDataYCutoff` — `GridYs[RowDataStart]` или `GridYs[HeaderEndRow]` (не maxY−2000).
 - `IsTextInColumnXBand(ColMark)`.
 - `TryParseMarkKey(Raw/Plain)` успешен.
+- Bleed: если `t.Col != ColMark` и длина > 4 — пропуск.
+
+**ColMark в CellMatrix:** `GetCellText(..., preferMarkColumn: true)` — приоритет коротким цифрам-маркам.
 
 **Разрешение конфликта в строке:** CellText mark или max DataY.
 
@@ -214,11 +246,27 @@ PosCounter.Net/
 
 ---
 
-## 11. Значение (наименование) — dual-pass + owner mark
+## 11. Значение (наименование) — `ResolveNameForKey` + dual-pass
 
-### Точка входа
+### Точка входа (универсальная)
 
-`FillMarkNamesFromMergeGroups` → `ResolveNameFromMergeGroup(key, log, out meta)`.
+`FillMarkNamesFromMergeGroups` / `FillMarkNamesFromAcadTableCells` → **`ResolveNameForKey(key)`** (LINE, native Table, N scopes).
+
+**Правило:** для марки `key` — верхняя строка блока в ColMark (`ResolveNameRowTopForKey`), имя из `CellText` + dual-pass `AllTexts` (LINE) при недостаточном CellText, fallback `CellText[rowMark, ColName]` и соседние col ±1, лог `[KV-ANCHOR]`.
+
+**Dedupe (MText+MText):**
+
+| Шаг | Метод | Правило |
+|-----|-------|---------|
+| cell-only | `ResolveNameForKey` | `cellJoined.Length ≥ 20` → без AllTexts pass, `[NAME-DEDUPE] reason=cell-only` |
+| filter | `FilterTextPartsNotInCellText` | AllTexts часть не добавлять, если уже в cellJoined |
+| merge rows | `TryAddNamePartExact` | dedupe по строкам merge-блока |
+| phrase | `CollapseDuplicateNamePhrase` | «A A» → «A» |
+| cell matrix | `IsDuplicateCandidate` | near-overlap (4× eps) один plain в ColName |
+
+`ResolveNameRowTopForKey`: `≥ HeaderEndRow`, `≥ RowDataStart`, не секция без марки (`IsSectionHeaderRow`, порог имени ≥ 8 символов).
+
+`ResolveNameFromMergeGroup` — алиас на `ResolveNameForKey`.
 
 ### Pass 1 — `CollectNamePartsForPositionRange`
 
