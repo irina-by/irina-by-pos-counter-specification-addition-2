@@ -125,7 +125,7 @@
 
 - **Ключ:** `BindKeysFromProperties` — `Contents`/`Raw` из ColMark, геометрия `DataX`/`DataY`; `KeyToRowMark` заполняется только здесь. Конфликт двух марок в одной строке → победитель по `CellText` или верхний по `DataY`; CMD `[POSC] Марка: наложение…`.
 - **Значение:** `CollectNamePartsFromProperties` — `Contents` из ColName по диапазону строк марки; `PickNameTextForRow` — один текст на строку (PrimaryNameLayer → ExtraNameLayers → NameScore); CMD `[POSC] NAME-OVERLAY…`.
-- **Геометрия:** `TextSample` — `HeaderX/Y` (шапка, ExtentsCenter), `DataX/Y` (Position/Location), `YMin`/`YMax`, `TextHeight`, `SourceIndex`. Pass-1 `AssignCellsHeader`; pass-2 `AssignCellsData` (экстент для ColName, точка для ColMark).
+- **Геометрия:** `TextSample` — `HeaderX/Y` (шапка, ExtentsCenter), `DataX/Y` (Position/Location; MText KV: **верх рамки YMax**), `YMin`/`YMax`, `TextHeight`, `SourceIndex`. Pass-1 `AssignCellsHeader`; pass-2 `AssignCellsData` (**Row по точке DataX/Y** для всех data-колонок; `DominantRow` — только bleed/diag).
 - **Экстент:** `TryGetRowOverlapFraction` / `TextOverlapsRowBand`; fallback высоты: `TextHeight` → `PrimaryNameTextHeight` → `MedianRowStep` → `QtyTextHeightFallback`.
 - **Spanning MText:** `SourceIndex` + `consumedSources` — `\P`-строки из одного объекта не дублируются на нижних строках.
 - **Парсер марки:** `TryParseMarkKey` — хвостовые `. , ; : ) ]` (`43.` → 43).
@@ -141,6 +141,18 @@
 - `StopAtSecondStandaloneName` — break при втором standalone; CMD `[NAME-STOP]`.
 - `LooksLikeSectionHeaderLine`, `IsStandaloneProductName` в `MTextPlainText`; CMD `[NAME-SECTION]`.
 - `TextsByRow` — по `t.Row`; fallback на `AllTexts`, если кэш строки пуст.
+
+## MText + DBText row binding (mtext-dbtext-row-fix)
+
+- **MText data-точка:** `CreateTextSampleFromMText` — `DataY = YMax` (верх extents); шапка pass-1 без изменений (`ExtentsCenter`).
+- **Pass-2 Row:** `AssignCellsData` — `Row = TryGetCellIndex(DataX, DataY)` для ColMark и ColName; `DominantRow = GetDominantRow` отдельно (bleed).
+- **Split после pass-2:** `SplitNameColumnRowsData` — по `DataX/DataY`, только ColName; CMD `[CELL-SPLIT-DATA]`.
+- **Anti-bleed:** `IsUpstreamBleedFromForeignMark` + `TextPointInRowBand` — pass 1; CMD `[NAME-BLEED]`.
+- **Dual-pass сбор значения** (откат DominantRow gate — давал пустые имена):
+  - Pass 1: `CollectNamePartsForPositionRange` → `CollectNamePartsFromNameCell` — все тексты строки с `TextOverlapsRowBand`, без winner.
+  - Pass 2: `SupplementNamePartsInVerticalBand` — добор по Y-полосе блока марки (без overlap), страховка для DBText с «съехавшим» Row.
+  - Склейка: `TryAddNamePartExact` + `string.Join`; CMD `[NAME-ROW]`, `[NAME-SUPPLEMENT]`, `[KV-PAIR] value=`.
+- **Шапка:** без изменений — `DetectHeader*`, `AssignCellsHeader`, pass-1 `CellText`.
 
 ## Ключевые классы
 

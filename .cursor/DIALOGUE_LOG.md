@@ -105,3 +105,15 @@
 > [2026-06-09] Задача: hotfix после kv-v2-bleed-fix — восстановить сбор имён.
 > Правка: убран PassesDominantRowGate; TextsByRow снова по t.Row; IsUpstreamBleedFromForeignMark не режет t.Row==row; PickBestTextSampleForRow — Score>0 OR IsAcceptableNameContinuation; fallback AllTexts при пустом кэше строки.
 > Результат: СБОРКА net8.0-windows OK; ручной тест _tex_fek — ожидает инженера (NETLOAD).
+
+> [2026-06-09] Задача: план mtext-dbtext-row-fix — MText DataY=YMax, Row по точке, split после pass-2, multi-text MText+DBText, anti-bleed TextPointInRowBand.
+> Правка: `TableGrid.cs` — CreateTextSampleFromMText (ExtentsTop), AssignCellsData (point-row), SplitNameColumnRowsData, ResolveNameTextsForRow, TextPointInRowBand, IsUpstreamBleedFromForeignMark (yTop/yBottom), [NAME-ROW]/[CELL-SPLIT-DATA]; порядок Build: PrimaryNameLayer до pass-2, split после AssignCellsData; docs/DEVELOPER.md.
+> Результат: СБОРКА net8.0-windows OK (0 errors); ручной тест _tex_fek (марки 52,5,4,1,98, шапка 35NK) — ожидает инженера (NETLOAD).
+
+> [2026-06-09] Задача: DominantRow primary gate — spanning MText «Труба…» не должен побеждать на нижней строке вместо DBText «Ду 50».
+> Правка: `TextBelongsToPrimaryRow`, `GetNameCandidatesInRow` (gate DominantRow==r, fallback t.Row); [NAME-DOM-SKIP], [KV-PAIR]/[NAME-BOUNDARY] value=, [NAME-ROW] src/domRow/display; TextsByRow без изменений.
+> Результат: СБОРКА net8.0-windows OK; ручной тест _tex_fek key=52 — **НЕ РАБОТАЕТ** — массово пустые имена (6–9, 47, 51…), многострочные имена не склеиваются.
+
+> [2026-06-09] Задача: dual-pass name collection — откат DominantRow gate, двухпроходный сбор (row overlap + vertical supplement).
+> Правка: `CollectNamePartsForPositionRange`, `CollectNamePartsFromNameCell`, `SupplementNamePartsInVerticalBand`; удалены TextBelongsToPrimaryRow, GetNameCandidatesInRow, ResolveNameTextsForRow, PickBestTextSampleForRow, CollectNamePartsFromProperties; [NAME-ROW]/[NAME-SUPPLEMENT]; шапка без изменений; docs.
+> Результат: СБОРКА net8.0-windows OK (0 errors); ручной тест _tex_fek (марки 52,6–9, шапка H1–H4) — ожидает инженера (NETLOAD).

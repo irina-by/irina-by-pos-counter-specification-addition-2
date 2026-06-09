@@ -286,13 +286,13 @@ namespace PosCounter.Net.SpecGrid
             EstimateHeaderEndRow(result, filteredH, log);
             DetectHeader(result, log);
             ComputeRowDataStart(result, null, log);
-            SplitNameColumnRows(texts, ysArr, result, log);
             BuildPrimaryNameLayer(texts, result, log);
             BuildTableContentLayers(texts, result, log);
             result.MedianRowStep = EstimateRowStep(ysArr, result.RowDataStart);
             result.PrimaryNameTextHeight = ComputePrimaryNameTextHeight(texts, result);
-            // Pass 2: data-координаты + экстентная привязка; PrimaryNameLayer for ColName.
+            // Pass 2: data-координаты (точка DataX/Y); split ColName после pass-2.
             AssignCellsData(texts, xsArr, ysArr, result);
+            SplitNameColumnRowsData(texts, ysArr, result, log);
             BuildTextsByRow(result);
             result.CellText = BuildCellMatrix(texts, rows, cols, result, log, filterTableLayers: true);
             ComputeRowDataStart(result, filteredH, log);
@@ -1737,7 +1737,7 @@ namespace PosCounter.Net.SpecGrid
                     if (joinMeta.Parts > 0)
                     {
                         log.Info($"[NAME-JOIN] scope={result.ScopeIndex} key={kv.Key} parts={joinMeta.Parts} texts={joinMeta.Texts} rows={joinMeta.RowTop}..{joinMeta.RowEnd}");
-                        log.Info($"[KV-PAIR] scope={result.ScopeIndex} key={kv.Key} texts={joinMeta.Texts} parts={joinMeta.Parts}");
+                        log.Info($"[KV-PAIR] scope={result.ScopeIndex} key={kv.Key} texts={joinMeta.Texts} parts={joinMeta.Parts} value=\"{TrimForLog(name, 80)}\"");
                     }
                 }
             }
@@ -1954,7 +1954,8 @@ namespace PosCounter.Net.SpecGrid
             rowEndExclusive = Math.Min(Math.Max(rowEndExclusive, rowTop + 1), grid.GridYs.Count);
 
             var parts = new List<string>();
-            var textCount = CollectNamePartsFromProperties(grid, key, rowTop, rowEndExclusive, parts, log);
+            var textCount = CollectNamePartsForPositionRange(grid, key, rowTop, rowEndExclusive, parts, log);
+            textCount += SupplementNamePartsInVerticalBand(grid, key, rowTop, rowEndExclusive, parts, log);
 
             var rowEndInclusive = rowEndExclusive > rowTop ? rowEndExclusive - 1 : rowTop;
             meta = new NameJoinMeta(rowTop, rowEndInclusive, parts.Count, rowEndExclusive, boundaryReason, textCount);
@@ -1962,12 +1963,14 @@ namespace PosCounter.Net.SpecGrid
             var shouldLogBoundary = parts.Count == 0 || key == 1 || key == 4 || key == 5 || key == 45 || key == 52 || key == 98
                 || key <= 10 || key == 51 || key == 57 || key == 70
                 || key == 104 || key == 105 || key >= 53 && key <= 56 || key >= 106 && key <= 109;
+            var joined = MTextPlainText.FormatForPaletteDisplay(string.Join(" ", parts).Trim());
             if (log != null && shouldLogBoundary)
             {
-                log.Info($"[NAME-BOUNDARY] scope={grid.ScopeIndex} key={key} rowTop={rowTop} rowMark={rowMark} merged={isMerged} rowEndEx={rowEndExclusive} reason={boundaryReason} parts={parts.Count} texts={textCount}");
+                log.Info(
+                    $"[NAME-BOUNDARY] scope={grid.ScopeIndex} key={key} rowTop={rowTop} rowMark={rowMark} merged={isMerged} rowEndEx={rowEndExclusive} reason={boundaryReason} parts={parts.Count} texts={textCount} value=\"{TrimForLog(joined, 80)}\"");
             }
 
-            return MTextPlainText.FormatForPaletteDisplay(string.Join(" ", parts).Trim());
+            return joined;
         }
 
         /// <summary>Верхняя граница следующей позиции (rowTopSub), чтобы не захватывать её имя.</summary>
@@ -2105,17 +2108,20 @@ namespace PosCounter.Net.SpecGrid
             ScopeGridResult grid,
             int key,
             int row,
+            double yTop,
+            double yBottom,
             TextSample t,
             SpecGridLog log)
         {
-            // Текст, привязанный к текущей строке марки — не отбрасывать.
-            if (t.Row == row)
+            var markAtRow = ResolveMarkKeyAtRow(grid, row);
+            if (TextPointInRowBand(t, yTop, yBottom) && (markAtRow == key || markAtRow == 0))
             {
-                var markAtRow = ResolveMarkKeyAtRow(grid, row);
-                if (markAtRow == key || markAtRow == 0)
-                {
-                    return false;
-                }
+                return false;
+            }
+
+            if (t.Row == row && (markAtRow == key || markAtRow == 0))
+            {
+                return false;
             }
 
             var dominantRow = GetDominantRowForText(t, grid);
@@ -2125,7 +2131,7 @@ namespace PosCounter.Net.SpecGrid
             }
 
             var markAtDom = ResolveMarkKeyAtRow(grid, dominantRow);
-            if (markAtDom > 0 && markAtDom != key)
+            if (markAtDom > 0 && markAtDom != key && !TextPointInRowBand(t, yTop, yBottom))
             {
                 log?.Info(
                     $"[NAME-BLEED] scope={grid.ScopeIndex} key={key} row={row} domRow={dominantRow} foreignMark={markAtDom} src={t.SourceIndex}");
@@ -2135,21 +2141,50 @@ namespace PosCounter.Net.SpecGrid
             return false;
         }
 
-        private static bool IsAcceptableNameCandidate(string display)
+        private static bool TextPointInRowBand(TextSample t, double yTop, double yBottom)
         {
-            if (string.IsNullOrWhiteSpace(display))
-            {
-                return false;
-            }
-
-            return MTextPlainText.NameScore(display) > 0
-                || MTextPlainText.IsAcceptableNameContinuation(display);
+            const double eps = CellIndex.CellIndexEps;
+            return t.DataY <= yTop + eps && t.DataY > yBottom - eps;
         }
 
-        private static string GetDisplayText(TextSample t)
+        private static bool ShouldLogNameRow(int key)
         {
-            return MTextPlainText.PreferDisplayNameFromSpec(
-                MTextPlainText.SanitizeRawContents(t.Raw ?? t.Plain ?? string.Empty));
+            return key == 1 || key == 4 || key == 5 || key == 52 || key == 98;
+        }
+
+        private static bool AddNamePartsFromTextSample(
+            ScopeGridResult grid,
+            int key,
+            int row,
+            TextSample winner,
+            List<string> parts,
+            SpecGridLog log)
+        {
+            var addedAny = false;
+            foreach (var line in MTextPlainText.EnumerateDisplayNameLines(winner.Raw ?? winner.Plain))
+            {
+                if (MTextPlainText.LooksLikeSectionHeaderLine(line))
+                {
+                    log?.Info($"[NAME-SECTION] scope={grid.ScopeIndex} key={key} row={row} line=\"{TrimForLog(line, 40)}\"");
+                    continue;
+                }
+
+                if (!MTextPlainText.IsAcceptableNameContinuation(line))
+                {
+                    continue;
+                }
+
+                var decoded = MTextPlainText.DecodeAutocadPercentCodes(line);
+                if (string.IsNullOrWhiteSpace(decoded))
+                {
+                    continue;
+                }
+
+                TryAddNamePartExact(parts, decoded);
+                addedAny = true;
+            }
+
+            return addedAny;
         }
 
         private static bool PartsContainStandalone(IReadOnlyList<string> parts)
@@ -2157,7 +2192,7 @@ namespace PosCounter.Net.SpecGrid
             return parts.Any(MTextPlainText.IsStandaloneProductName);
         }
 
-        private static int CollectNamePartsFromProperties(
+        private static int CollectNamePartsForPositionRange(
             ScopeGridResult grid,
             int key,
             int rowTop,
@@ -2197,148 +2232,156 @@ namespace PosCounter.Net.SpecGrid
                     continue;
                 }
 
-                var yTop = grid.GridYs[r];
-                var yBottom = r + 1 < grid.GridYs.Count ? grid.GridYs[r + 1] : yTop - 1.0;
-                List<TextSample> candidates;
-                if (grid.TextsByRow != null
-                    && grid.TextsByRow.TryGetValue(r, out var cached)
-                    && cached.Count > 0)
+                if (CollectNamePartsFromNameCell(grid, key, r, parts, consumedSources, log, ref textCount))
                 {
-                    candidates = cached
-                        .Where(t => TextOverlapsRowBand(t, yTop, yBottom, grid))
-                        .Where(t => !IsUpstreamBleedFromForeignMark(grid, key, r, t, log))
-                        .ToList();
-                }
-                else
-                {
-                    candidates = (grid.AllTexts ?? new List<TextSample>())
-                        .Where(t => PassesCellLayerFilter(t, grid))
-                        .Where(t => IsTextInColumnXBand(grid, grid.ColName, t))
-                        .Where(t => TextOverlapsRowBand(t, yTop, yBottom, grid))
-                        .Where(t => !IsUpstreamBleedFromForeignMark(grid, key, r, t, log))
-                        .ToList();
-                }
-
-                var winner = PickBestTextSampleForRow(grid, r, candidates, log);
-                if (winner == null)
-                {
-                    continue;
-                }
-
-                var winnerDisplay = GetDisplayText(winner);
-                if (PartsContainStandalone(parts) && MTextPlainText.IsStandaloneProductName(winnerDisplay))
-                {
-                    log?.Info($"[NAME-STOP] scope={grid.ScopeIndex} key={key} row={r} second standalone");
-                    break;
-                }
-
-                if (consumedSources.Contains(winner.SourceIndex))
-                {
-                    continue;
-                }
-
-                consumedSources.Add(winner.SourceIndex);
-                textCount++;
-                var addedAny = false;
-
-                foreach (var line in MTextPlainText.EnumerateDisplayNameLines(winner.Raw ?? winner.Plain))
-                {
-                    if (MTextPlainText.LooksLikeSectionHeaderLine(line))
-                    {
-                        log?.Info($"[NAME-SECTION] scope={grid.ScopeIndex} key={key} row={r} line=\"{TrimForLog(line, 40)}\"");
-                        continue;
-                    }
-
-                    if (!MTextPlainText.IsAcceptableNameContinuation(line))
-                    {
-                        continue;
-                    }
-
-                    var decoded = MTextPlainText.DecodeAutocadPercentCodes(line);
-                    if (string.IsNullOrWhiteSpace(decoded))
-                    {
-                        continue;
-                    }
-
-                    TryAddNamePartExact(parts, decoded);
-                    addedAny = true;
-                }
-
-                if (addedAny && PartsContainStandalone(parts) && r + 1 < rowEndExclusive)
-                {
-                    // Следующая строка с другим standalone — остановимся на следующей итерации
+                    return textCount;
                 }
             }
 
             return textCount;
         }
 
-        private static TextSample PickBestTextSampleForRow(
+        /// <summary>Pass 1: все тексты строки с overlap. true = stop (second standalone).</summary>
+        private static bool CollectNamePartsFromNameCell(
             ScopeGridResult grid,
+            int key,
             int row,
-            List<TextSample> candidates,
+            List<string> parts,
+            HashSet<int> consumedSources,
+            SpecGridLog log,
+            ref int textCount)
+        {
+            var yTop = grid.GridYs[row];
+            var yBottom = row + 1 < grid.GridYs.Count ? grid.GridYs[row + 1] : yTop - 1.0;
+
+            var rowHits = (grid.AllTexts ?? new List<TextSample>())
+                .Where(t => PassesCellLayerFilter(t, grid))
+                .Where(t => IsTextInColumnXBand(grid, grid.ColName, t))
+                .Where(t => TextOverlapsRowBand(t, yTop, yBottom, grid))
+                .Where(t => !IsUpstreamBleedFromForeignMark(grid, key, row, yTop, yBottom, t, log))
+                .OrderByDescending(t => t.DataY)
+                .ThenBy(t => t.DataX)
+                .ToList();
+
+            foreach (var t in rowHits)
+            {
+                if (string.IsNullOrWhiteSpace(t.Raw ?? t.Plain))
+                {
+                    continue;
+                }
+
+                if (ShouldLogNameRow(key))
+                {
+                    log?.Info(
+                        $"[NAME-ROW] scope={grid.ScopeIndex} key={key} row={row} src={t.SourceIndex} type={(t.IsMText ? "MText" : "DBText")} display=\"{TrimForLog(GetDisplayText(t), 40)}\"");
+                }
+
+                var display = GetDisplayText(t);
+                if (PartsContainStandalone(parts) && MTextPlainText.IsStandaloneProductName(display))
+                {
+                    log?.Info($"[NAME-STOP] scope={grid.ScopeIndex} key={key} row={row} second standalone");
+                    return true;
+                }
+
+                if (consumedSources.Contains(t.SourceIndex))
+                {
+                    continue;
+                }
+
+                consumedSources.Add(t.SourceIndex);
+                textCount++;
+                AddNamePartsFromTextSample(grid, key, row, t, parts, log);
+            }
+
+            return false;
+        }
+
+        private static int SupplementNamePartsInVerticalBand(
+            ScopeGridResult grid,
+            int key,
+            int rowTop,
+            int rowEndExclusive,
+            List<string> parts,
             SpecGridLog log)
         {
-            if (candidates == null || candidates.Count == 0)
+            if (grid.ColName < 0 || grid.GridXs.Count <= grid.ColName + 1 || grid.GridYs.Count == 0)
             {
-                return null;
-            }
-
-            var filtered = candidates
-                .Where(t => PassesCellLayerFilter(t, grid))
-                .Where(t => !string.IsNullOrWhiteSpace(t.Raw ?? t.Plain))
-                .Select(t => (Sample: t, Display: GetDisplayText(t), Score: MTextPlainText.NameScore(GetDisplayText(t))))
-                .Where(x => IsAcceptableNameCandidate(x.Display))
-                .ToList();
-            if (filtered.Count == 0)
-            {
-                return null;
-            }
-
-            if (filtered.Count == 1)
-            {
-                return filtered[0].Sample;
-            }
-
-            int LayerRank(TextSample t)
-            {
-                var layer = t.Layer ?? string.Empty;
-                if (!string.IsNullOrWhiteSpace(grid.PrimaryNameLayer)
-                    && string.Equals(layer, grid.PrimaryNameLayer, StringComparison.OrdinalIgnoreCase))
-                {
-                    return 2;
-                }
-
-                if (grid.ExtraNameLayers.Contains(layer))
-                {
-                    return 1;
-                }
-
                 return 0;
             }
 
-            var scored = filtered
-                .Select(x => (x.Sample, x.Display, x.Score, Rank: LayerRank(x.Sample)))
-                .ToList();
-
-            var best = scored
-                .OrderByDescending(x => x.Rank)
-                .ThenByDescending(x => x.Score)
-                .ThenByDescending(x => x.Display.Length)
-                .ThenByDescending(x => GetSortY(x.Sample))
-                .First();
-
-            if (scored.Count > 1)
+            if (rowTop < 0 || rowTop >= grid.GridYs.Count)
             {
-                var dropped = scored
-                    .Where(x => x.Sample.SourceIndex != best.Sample.SourceIndex)
-                    .Select(x => $"{x.Sample.Layer}(score={x.Score})")
-                    .Take(3);
-                log?.Info(
-                    $"[POSC] NAME-OVERLAY scope={grid.ScopeIndex} row={row} picked layer={best.Sample.Layer} score={best.Score} dropped={string.Join(", ", dropped)}");
+                return 0;
             }
 
-            return best.Sample;
+            rowEndExclusive = Math.Min(rowEndExclusive, grid.GridYs.Count);
+            if (rowEndExclusive <= rowTop)
+            {
+                rowEndExclusive = Math.Min(rowTop + 1, grid.GridYs.Count);
+            }
+
+            var yTop = grid.GridYs[rowTop];
+            var yBottom = rowEndExclusive < grid.GridYs.Count
+                ? grid.GridYs[rowEndExclusive]
+                : grid.GridYs[grid.GridYs.Count - 1];
+            const double eps = CellIndex.CellIndexEps;
+            var supplementCount = 0;
+
+            var hits = (grid.AllTexts ?? new List<TextSample>())
+                .Where(t => PassesCellLayerFilter(t, grid))
+                .Where(t => IsTextInColumnXBand(grid, grid.ColName, t))
+                .Where(t => t.DataY <= yTop + eps && t.DataY > yBottom - eps)
+                .OrderByDescending(t => t.DataY)
+                .ThenBy(t => t.DataX)
+                .ToList();
+
+            foreach (var t in hits)
+            {
+                if (string.IsNullOrWhiteSpace(t.Raw ?? t.Plain))
+                {
+                    continue;
+                }
+
+                var textRow = t.Row;
+                if (textRow < 0 && grid.GridXs.Count >= 2)
+                {
+                    CellIndex.TryGetCellIndex(t.DataX, t.DataY, grid.GridXs, grid.GridYs, out textRow, out _);
+                }
+
+                if (textRow >= 0)
+                {
+                    var markAtTextRow = ResolveMarkKeyAtRow(grid, textRow);
+                    if (markAtTextRow > 0 && markAtTextRow != key)
+                    {
+                        continue;
+                    }
+
+                    if (IsSectionHeaderRow(grid, textRow))
+                    {
+                        continue;
+                    }
+                }
+
+                var beforeCount = parts.Count;
+                AddNamePartsFromTextSample(grid, key, textRow >= 0 ? textRow : rowTop, t, parts, log);
+                if (parts.Count > beforeCount)
+                {
+                    supplementCount++;
+                    if (ShouldLogNameRow(key))
+                    {
+                        log?.Info(
+                            $"[NAME-SUPPLEMENT] scope={grid.ScopeIndex} key={key} src={t.SourceIndex} display=\"{TrimForLog(GetDisplayText(t), 40)}\"");
+                    }
+                }
+            }
+
+            return supplementCount;
+        }
+
+        private static string GetDisplayText(TextSample t)
+        {
+            return MTextPlainText.PreferDisplayNameFromSpec(
+                MTextPlainText.SanitizeRawContents(t.Raw ?? t.Plain ?? string.Empty));
         }
 
         private static bool TextOverlapsRowBand(TextSample t, double yTop, double yBottom, ScopeGridResult grid)
@@ -2540,9 +2583,9 @@ namespace PosCounter.Net.SpecGrid
                 t.Col = col;
 
                 var rowByExtent = FindBestRowByExtent(t, ys, result);
-                if (result.ColMark >= 0 && col == result.ColMark)
+                if (rowByPoint >= 0)
                 {
-                    t.Row = rowByPoint >= 0 ? rowByPoint : rowByExtent;
+                    t.Row = rowByPoint;
                 }
                 else if (rowByExtent >= 0)
                 {
@@ -2550,7 +2593,7 @@ namespace PosCounter.Net.SpecGrid
                 }
                 else
                 {
-                    t.Row = rowByPoint;
+                    t.Row = -1;
                 }
 
                 t.DominantRow = CellIndex.GetDominantRow(t, ys, result);
@@ -2688,6 +2731,63 @@ namespace PosCounter.Net.SpecGrid
             return t.IsMText && Math.Abs(t.YMax - t.YMin) > 1e-6 ? t.YMax : t.DataY;
         }
 
+        private static void SplitNameColumnRowsData(
+            List<TextSample> texts,
+            double[] ys,
+            ScopeGridResult result,
+            SpecGridLog log)
+        {
+            if (result.ColName < 0 || ys == null || ys.Length < 3)
+            {
+                return;
+            }
+
+            var rowStep = result.MedianRowStep > 1e-6
+                ? result.MedianRowStep
+                : EstimateRowStep(ys, result.RowDataStart);
+            if (rowStep <= 0)
+            {
+                return;
+            }
+
+            var halfStep = rowStep * 0.45;
+            var xs = result.GridXs.ToArray();
+            var byRow = texts
+                .Where(t => t.Col == result.ColName && t.Row >= result.RowDataStart && !string.IsNullOrWhiteSpace(t.Plain))
+                .GroupBy(t => t.Row)
+                .ToList();
+
+            foreach (var group in byRow)
+            {
+                var ordered = group.OrderByDescending(t => t.DataY).ToList();
+                if (ordered.Count < 2)
+                {
+                    continue;
+                }
+
+                for (var i = 1; i < ordered.Count; i++)
+                {
+                    var upper = ordered[i - 1];
+                    var lower = ordered[i];
+                    if (Math.Abs(upper.DataY - lower.DataY) < halfStep)
+                    {
+                        continue;
+                    }
+
+                    if (!CellIndex.TryGetCellIndex(lower.DataX, lower.DataY, xs, ys, out var newRow, out var newCol)
+                        || newCol != result.ColName
+                        || newRow == lower.Row)
+                    {
+                        continue;
+                    }
+
+                    log.Debug(
+                        $"[CELL-SPLIT-DATA] scope={result.ScopeIndex} row {lower.Row}->{newRow} dy={Math.Abs(upper.DataY - lower.DataY):0}");
+                    lower.Row = newRow;
+                }
+            }
+        }
+
         private static void SplitNameColumnRows(
             List<TextSample> texts,
             double[] ys,
@@ -2778,7 +2878,8 @@ namespace PosCounter.Net.SpecGrid
                     mt.Location.Z);
                 yMin = ex.MinPoint.Y;
                 yMax = ex.MaxPoint.Y;
-                method = "ExtentsCenter";
+                dataPt = new Point3d(mt.Location.X, ex.MaxPoint.Y, mt.Location.Z);
+                method = "ExtentsTop";
             }
             catch
             {
