@@ -93,3 +93,15 @@
 > [2026-06-08] Задача: центр «Кол.» при пометках инженера (span по сетке ColQty, план центр_colqty_по_сетке).
 > Правка: `SpecGridService.cs` — `ResolveQtyCellRowBottomExByColQtyGrid` (H-линии в полосе X ColQty + cap `ResolveNextKeyRowTopEx`); Y по span только при `rowBottomEx > rowTop+1`; `IsPointInQtyCellSpan` + tie-break по Y для merged; однострочные ячейки — как после отката. **`KeyToMarkBlockEnd` не используется.**
 > Результат: СБОРКА net8.0-windows OK (0 errors), `dll 2026\PosCounter.Net.dll` обновлена; grep — 0 использований `KeyToMarkBlockEnd`/`GetMarkBlockEndExclusive` (только комментарий); ручной тест — merged ColQty с пометкой и однострочные ячейки.
+
+> [2026-06-09] Задача: план properties-kv-v2 — ключ/значение строго из Contents + геометрии (DataX/Y, YMin/YMax), PickNameTextForRow при наложении MText.
+> Правка: `TableGrid.cs` — TextSample (Header/Data coords, extent), AssignCellsHeader/Data, BindKeysFromProperties, CollectNamePartsFromProperties, PickNameTextForRow, TextsByRow; `MTextPlainText.cs` — TryParseMarkKey хвост `43.`; docs/DEVELOPER.md.
+> Результат: СБОРКА net8.0-windows OK (0 errors); ручной тест 35NK + overlay + spanning MText — ожидает инженера (NETLOAD).
+
+> [2026-06-09] Задача: план kv-v2-bleed-fix — bleed 4→5, склейка 98/45, заголовок в марке 1, пустые 6–9.
+> Правка: `CellIndex.cs` — TryGetRowByExtent, GetDominantRow; `TableGrid.cs` — RowToKeyMark, IsUpstreamBleedFromForeignMark, PassesDominantRowGate, PickBestTextSampleForRow, StopAtSecondStandaloneName; `MTextPlainText.cs` — LooksLikeSectionHeaderLine, IsStandaloneProductName; docs.
+> Результат: СБОРКА net8.0-windows OK (0 errors); ручной тест _tex_fek — **НЕ РАБОТАЕТ** — PassesDominantRowGate (dominantRow==r) + TextsByRow по DominantRow → массово пустые имена.
+
+> [2026-06-09] Задача: hotfix после kv-v2-bleed-fix — восстановить сбор имён.
+> Правка: убран PassesDominantRowGate; TextsByRow снова по t.Row; IsUpstreamBleedFromForeignMark не режет t.Row==row; PickBestTextSampleForRow — Score>0 OR IsAcceptableNameContinuation; fallback AllTexts при пустом кэше строки.
+> Результат: СБОРКА net8.0-windows OK; ручной тест _tex_fek — ожидает инженера (NETLOAD).

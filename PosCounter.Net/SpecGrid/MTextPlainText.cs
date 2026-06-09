@@ -125,10 +125,107 @@ namespace PosCounter.Net.SpecGrid
             }
         }
 
+        /// <summary>Заголовок раздела без марки (например «Хозяйственно-питьевой водопровод (В1)»).</summary>
+        public static bool LooksLikeSectionHeaderLine(string display)
+        {
+            if (string.IsNullOrWhiteSpace(display))
+            {
+                return false;
+            }
+
+            var t = display.Trim();
+            if (t.Length < 25 || !HasLetter(t))
+            {
+                return false;
+            }
+
+            if (HasProductDimensionPattern(t))
+            {
+                return false;
+            }
+
+            if (t.IndexOf("SDR", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return false;
+            }
+
+            if (t.IndexOf("МПа", StringComparison.OrdinalIgnoreCase) >= 0
+                || t.IndexOf("MPa", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return false;
+            }
+
+            if (t.IndexOf("(В1)", StringComparison.OrdinalIgnoreCase) >= 0
+                || t.IndexOf("(В2)", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            if (t.IndexOf("водопровод", StringComparison.OrdinalIgnoreCase) >= 0 && t.IndexOf('(') >= 0)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>Самостоятельное изделие (полное наименование в одной строке).</summary>
+        public static bool IsStandaloneProductName(string display)
+        {
+            if (string.IsNullOrWhiteSpace(display))
+            {
+                return false;
+            }
+
+            var t = display.Trim();
+            return NameScore(t) >= 6 && t.Length >= 20 && HasLetter(t);
+        }
+
+        private static bool HasProductDimensionPattern(string t)
+        {
+            for (var i = 0; i < t.Length - 2; i++)
+            {
+                if (!char.IsDigit(t[i]))
+                {
+                    continue;
+                }
+
+                var j = i;
+                while (j < t.Length && char.IsDigit(t[j]))
+                {
+                    j++;
+                }
+
+                if (j >= t.Length)
+                {
+                    continue;
+                }
+
+                var sep = t[j];
+                if (sep != 'x' && sep != 'X' && sep != 'х' && sep != '×')
+                {
+                    continue;
+                }
+
+                j++;
+                if (j < t.Length && char.IsDigit(t[j]))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         /// <summary>Короткая строка-продолжение наименования (хвост «с гайкой…»).</summary>
         public static bool IsAcceptableNameContinuation(string display)
         {
             if (string.IsNullOrWhiteSpace(display))
+            {
+                return false;
+            }
+
+            if (LooksLikeSectionHeaderLine(display))
             {
                 return false;
             }
@@ -221,12 +318,30 @@ namespace PosCounter.Net.SpecGrid
         public static bool TryParseMarkKey(string text, out int key)
         {
             key = 0;
-            if (!IsExactDigitMark(text))
+            if (string.IsNullOrWhiteSpace(text))
             {
                 return false;
             }
 
-            return int.TryParse(text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out key);
+            var t = text.Trim();
+            while (t.Length > 0)
+            {
+                var last = t[t.Length - 1];
+                if (last == '.' || last == ',' || last == ';' || last == ':' || last == ')' || last == ']')
+                {
+                    t = t.Substring(0, t.Length - 1).TrimEnd();
+                    continue;
+                }
+
+                break;
+            }
+
+            if (!IsExactDigitMark(t))
+            {
+                return false;
+            }
+
+            return int.TryParse(t, NumberStyles.None, CultureInfo.InvariantCulture, out key);
         }
 
         public static int NameScore(string plain)

@@ -32,6 +32,20 @@ namespace PosCounter.Net.SpecGrid
         public string Raw;
         /// <summary>§19.6: true для MText, false для DBText.</summary>
         public bool IsMText;
+        /// <summary>ExtentsCenter — шапка, pass-1 AssignCells.</summary>
+        public double HeaderX;
+        public double HeaderY;
+        /// <summary>Position/Location — KV-пайплайн.</summary>
+        public double DataX;
+        public double DataY;
+        /// <summary>Вертикальный экстент (GeometricExtents).</summary>
+        public double YMin;
+        public double YMax;
+        public double TextHeight;
+        /// <summary>Индекс в AllTexts — дедуп spanning MText.</summary>
+        public int SourceIndex;
+        /// <summary>Строка с max overlap экстента (pass-2 data).</summary>
+        public int DominantRow = -1;
     }
 
     internal sealed class ScopeGridResult
@@ -51,6 +65,8 @@ namespace PosCounter.Net.SpecGrid
         public string[,] CellText;
         public Dictionary<int, string> MarkNamePairs = new Dictionary<int, string>();
         public Dictionary<int, int> KeyToRowMark = new Dictionary<int, int>();
+        /// <summary>Обратный индекс row → key (BindKeysFromProperties).</summary>
+        public Dictionary<int, int> RowToKeyMark = new Dictionary<int, int>();
         public Dictionary<int, int> KeyToRowTopSub = new Dictionary<int, int>();
         /// <summary>Нижняя граница блока объединённой марки (exclusive), по следующей цифре в ColMark.</summary>
         public Dictionary<int, int> KeyToMarkBlockEnd = new Dictionary<int, int>();
@@ -86,6 +102,12 @@ namespace PosCounter.Net.SpecGrid
         /// <summary>ColMark уточнён по цифрам в данных (до → после EnsureUniqueHeaderColumns).</summary>
         public int ColMarkRefinedFrom = -1;
         public int ColMarkRefinedTo = -1;
+        /// <summary>Медиана шага строк сетки (EstimateRowStep).</summary>
+        public double MedianRowStep;
+        /// <summary>Медиана TextHeight текстов PrimaryNameLayer в ColName.</summary>
+        public double PrimaryNameTextHeight;
+        /// <summary>Кэш текстов ColName по строке (pass-2 data).</summary>
+        public Dictionary<int, List<TextSample>> TextsByRow = new Dictionary<int, List<TextSample>>();
     }
 
     internal static class TableGridBuilder
@@ -170,7 +192,7 @@ namespace PosCounter.Net.SpecGrid
                         return result;
                     }
 
-                    texts.Add(CreateTextSampleFromDbText(db, scopeIndex, log));
+                    texts.Add(CreateTextSampleFromDbText(db, texts.Count, scopeIndex, log));
                     continue;
                 }
 
@@ -182,7 +204,7 @@ namespace PosCounter.Net.SpecGrid
                         return result;
                     }
 
-                    texts.Add(CreateTextSampleFromMText(mt, scopeIndex, log));
+                    texts.Add(CreateTextSampleFromMText(mt, texts.Count, scopeIndex, log));
                 }
             }
 
@@ -258,7 +280,7 @@ namespace PosCounter.Net.SpecGrid
             result.RowDataEnd = rows - 1;
             var xsArr = xs.ToArray();
             var ysArr = ys.ToArray();
-            AssignCells(texts, xsArr, ysArr, scopeIndex, log);
+            AssignCellsHeader(texts, xsArr, ysArr);
             // Pass 1: all layers → header + layer statistics.
             result.CellText = BuildCellMatrix(texts, rows, cols, result, log, filterTableLayers: false);
             EstimateHeaderEndRow(result, filteredH, log);
@@ -267,9 +289,14 @@ namespace PosCounter.Net.SpecGrid
             SplitNameColumnRows(texts, ysArr, result, log);
             BuildPrimaryNameLayer(texts, result, log);
             BuildTableContentLayers(texts, result, log);
-            // Pass 2: PrimaryNameLayer for ColName; TableContentLayers for MARK/QTY.
+            result.MedianRowStep = EstimateRowStep(ysArr, result.RowDataStart);
+            result.PrimaryNameTextHeight = ComputePrimaryNameTextHeight(texts, result);
+            // Pass 2: data-координаты + экстентная привязка; PrimaryNameLayer for ColName.
+            AssignCellsData(texts, xsArr, ysArr, result);
+            BuildTextsByRow(result);
             result.CellText = BuildCellMatrix(texts, rows, cols, result, log, filterTableLayers: true);
             ComputeRowDataStart(result, filteredH, log);
+            BindKeysFromProperties(result, log);
             BindKeys(result, filteredH, log);
             AlignRowDataStartToFirstMark(result, log);
             FillMarkNamesFromMergeGroups(result, log);
@@ -881,7 +908,9 @@ namespace PosCounter.Net.SpecGrid
             const double eps = CellIndex.CellIndexEps;
             var xL = result.GridXs[col];
             var xR = result.GridXs[col + 1];
-            return t.Col == col || (t.X >= xL - eps && t.X <= xR + eps);
+            return t.Col == col
+                || (t.DataX >= xL - eps && t.DataX <= xR + eps)
+                || (t.X >= xL - eps && t.X <= xR + eps);
         }
 
         /// <summary>
@@ -911,7 +940,7 @@ namespace PosCounter.Net.SpecGrid
                     continue;
                 }
 
-                if (yCutoff != 0 && t.Y >= yCutoff)
+                if (yCutoff != 0 && t.DataY >= yCutoff)
                 {
                     continue;
                 }
@@ -921,7 +950,7 @@ namespace PosCounter.Net.SpecGrid
                     continue;
                 }
 
-                if (MTextPlainText.TryParseMarkKey(t.Plain ?? string.Empty, out var key))
+                if (MTextPlainText.TryParseMarkKey(t.Raw ?? t.Plain ?? string.Empty, out var key))
                 {
                     keys.Add(key);
                 }
@@ -1707,7 +1736,8 @@ namespace PosCounter.Net.SpecGrid
                     log.Info($"TABLE-ROWS: key={kv.Key} → name=\"{name}\" (merge-join)");
                     if (joinMeta.Parts > 0)
                     {
-                        log.Info($"[NAME-JOIN] scope={result.ScopeIndex} key={kv.Key} parts={joinMeta.Parts} rows={joinMeta.RowTop}..{joinMeta.RowEnd}");
+                        log.Info($"[NAME-JOIN] scope={result.ScopeIndex} key={kv.Key} parts={joinMeta.Parts} texts={joinMeta.Texts} rows={joinMeta.RowTop}..{joinMeta.RowEnd}");
+                        log.Info($"[KV-PAIR] scope={result.ScopeIndex} key={kv.Key} texts={joinMeta.Texts} parts={joinMeta.Parts}");
                     }
                 }
             }
@@ -1728,13 +1758,14 @@ namespace PosCounter.Net.SpecGrid
 
         private readonly struct NameJoinMeta
         {
-            public NameJoinMeta(int rowTop, int rowEnd, int parts, int rowEndExclusive, string boundaryReason)
+            public NameJoinMeta(int rowTop, int rowEnd, int parts, int rowEndExclusive, string boundaryReason, int texts)
             {
                 RowTop = rowTop;
                 RowEnd = rowEnd;
                 Parts = parts;
                 RowEndExclusive = rowEndExclusive;
                 BoundaryReason = boundaryReason ?? string.Empty;
+                Texts = texts;
             }
 
             public int RowTop { get; }
@@ -1742,6 +1773,7 @@ namespace PosCounter.Net.SpecGrid
             public int Parts { get; }
             public int RowEndExclusive { get; }
             public string BoundaryReason { get; }
+            public int Texts { get; }
         }
 
         private static string GetCellNameAtRow(ScopeGridResult result, int row)
@@ -1780,133 +1812,100 @@ namespace PosCounter.Net.SpecGrid
             }
         }
 
-        /// <summary>Марка в CellText могла оказаться на строке ниже — привязка по AllTexts в ColMark.</summary>
-        private static void BindKeysFromMarkColumnTexts(ScopeGridResult result, SpecGridLog log)
+        private static void BindKeysFromProperties(ScopeGridResult result, SpecGridLog log)
         {
+            result.KeyToRowMark.Clear();
+            result.RowToKeyMark.Clear();
             if (result.ColMark < 0 || result.GridXs.Count < 2)
             {
                 return;
             }
 
-            var xL = result.GridXs[result.ColMark];
-            var xR = result.GridXs[result.ColMark + 1];
-            const double eps = 2.0;
-            foreach (var t in result.AllTexts)
+            TryGetHeaderTopTextBandY(result, out _, out _);
+            var yCutoff = result.HeaderTopBandLo;
+            var rowCandidates = new Dictionary<int, List<(int Key, TextSample Sample)>>();
+
+            foreach (var t in result.AllTexts ?? new List<TextSample>())
             {
-                if (t.Row < 0)
+                if (t.Row < 0 || IsSectionHeaderRow(result, t.Row))
                 {
                     continue;
                 }
 
-                if (IsSectionHeaderRow(result, t.Row))
+                if (yCutoff != 0 && t.DataY >= yCutoff)
                 {
                     continue;
                 }
 
-                var inMarkCol = t.Col == result.ColMark
-                    || (t.X >= xL - eps && t.X <= xR + eps);
-                if (!inMarkCol)
+                if (!IsTextInColumnXBand(result, result.ColMark, t))
                 {
                     continue;
                 }
 
-                if (!MTextPlainText.TryParseMarkKey(t.Plain ?? string.Empty, out var key))
+                if (!MTextPlainText.TryParseMarkKey(t.Raw ?? t.Plain ?? string.Empty, out var key))
                 {
                     continue;
                 }
 
-                var prev = result.KeyToRowMark.TryGetValue(key, out var existing) ? existing : -1;
-                BindKeyToRow(result, key, t.Row);
-                if (!result.KeyToRowMark.TryGetValue(key, out var now) || now != prev)
+                if (!rowCandidates.TryGetValue(t.Row, out var list))
                 {
-                    if (key <= 3)
-                    {
-                        log?.RowDataDiag(
-                            $"[ROW-DATA] scope={result.ScopeIndex} BindKeys AllTexts: key={key} row={t.Row} layer={t.Layer} «{TrimForLog(t.Plain ?? string.Empty, 24)}»");
-                    }
-
-                    log.Debug($"TABLE-GRID: scope={result.ScopeIndex} bind key={key} row={t.Row} source=AllTexts");
+                    list = new List<(int, TextSample)>();
+                    rowCandidates[t.Row] = list;
                 }
-            }
-        }
 
-        private static void RefineBindRowsForEmptyMarkName(ScopeGridResult result, SpecGridLog log)
-        {
-            if (result.ColMark < 0 || result.ColName < 0)
-            {
-                return;
+                list.Add((key, t));
             }
 
-            var rows = result.CellText.GetLength(0);
-            foreach (var kv in result.KeyToRowMark.OrderBy(x => x.Key).ToList())
+            var rowWinners = new Dictionary<int, int>();
+            foreach (var kv in rowCandidates)
             {
-                var r = kv.Value;
-                if (r < 0 || r >= rows)
+                var row = kv.Key;
+                var keys = kv.Value.Select(x => x.Key).Distinct().ToList();
+                if (keys.Count == 1)
                 {
+                    rowWinners[row] = keys[0];
                     continue;
                 }
 
-                var nameAtMark = GetTrimmedNameAtRow(result, r);
-                if (!string.IsNullOrWhiteSpace(nameAtMark))
+                var winner = keys[0];
+                var cellMark = result.CellText != null && row < result.CellText.GetLength(0)
+                    ? result.CellText[row, result.ColMark] ?? string.Empty
+                    : string.Empty;
+                if (MTextPlainText.TryParseMarkKey(cellMark, out var cellKey) && keys.Contains(cellKey))
                 {
-                    continue;
+                    winner = cellKey;
+                }
+                else
+                {
+                    winner = kv.Value.OrderByDescending(x => x.Sample.DataY).First().Key;
                 }
 
-                if (r + 1 >= rows)
+                rowWinners[row] = winner;
+                log?.Info($"[POSC] Марка: наложение в ячейке row={row} keys={string.Join(",", keys.OrderBy(x => x))} → выбран {winner}");
+            }
+
+            foreach (var kv in rowWinners)
+            {
+                BindKeyToRow(result, kv.Value, kv.Key);
+                result.RowToKeyMark[kv.Key] = kv.Value;
+                if (kv.Value <= 3)
                 {
-                    continue;
+                    log?.RowDataDiag(
+                        $"[ROW-DATA] scope={result.ScopeIndex} BindKeysFromProperties: key={kv.Value} row={kv.Key}");
                 }
 
-                var markNext = result.CellText[r + 1, result.ColMark] ?? string.Empty;
-                if (MTextPlainText.TryParseMarkKey(markNext, out var otherKey) && otherKey != kv.Key)
-                {
-                    continue;
-                }
-
-                var nameBelow = GetTrimmedNameAtRow(result, r + 1);
-                if (!string.IsNullOrWhiteSpace(nameBelow) && MTextPlainText.NameScore(nameBelow) > 0)
-                {
-                    log.Debug($"BIND-REFINE: scope={result.ScopeIndex} key={kv.Key} keep row={r} (name below row={r + 1})");
-                }
+                log.Debug($"TABLE-GRID: scope={result.ScopeIndex} bind key={kv.Value} row={kv.Key} source=Properties");
             }
         }
 
         private static void BindKeys(ScopeGridResult result, List<GridLineSeg> horiz, SpecGridLog log)
         {
-            result.KeyToRowMark.Clear();
             result.KeyToRowTopSub.Clear();
+            result.KeyToMarkBlockEnd.Clear();
             if (result.ColMark < 0)
             {
                 return;
             }
-
-            var rows = result.CellText.GetLength(0);
-            // Скан с row 0: первая марка может быть в первой строке данных, даже если RowDataStart ещё неточен.
-            for (var r = 0; r < rows; r++)
-            {
-                var mark = result.CellText[r, result.ColMark] ?? string.Empty;
-                if (IsSectionHeaderRow(result, r))
-                {
-                    continue;
-                }
-
-                if (!MTextPlainText.TryParseMarkKey(mark, out var key))
-                {
-                    continue;
-                }
-
-                BindKeyToRow(result, key, r);
-                if (key <= 3)
-                {
-                    log?.RowDataDiag(
-                        $"[ROW-DATA] scope={result.ScopeIndex} BindKeys CellText: key={key} row={r} MARK={DescribeMarkCellForLog(mark)}");
-                }
-
-                log.Debug($"TABLE-GRID: scope={result.ScopeIndex} bind key={key} row={r} source=CellText");
-            }
-
-            BindKeysFromMarkColumnTexts(result, log);
-            RefineBindRowsForEmptyMarkName(result, log);
 
             foreach (var kv in result.KeyToRowMark)
             {
@@ -1937,7 +1936,7 @@ namespace PosCounter.Net.SpecGrid
             SpecGridLog log,
             out NameJoinMeta meta)
         {
-            meta = new NameJoinMeta(0, 0, 0, 0, string.Empty);
+            meta = new NameJoinMeta(0, 0, 0, 0, string.Empty, 0);
             if (!grid.KeyToRowMark.TryGetValue(key, out var rowMark) || grid.ColName < 0)
             {
                 return string.Empty;
@@ -1955,17 +1954,17 @@ namespace PosCounter.Net.SpecGrid
             rowEndExclusive = Math.Min(Math.Max(rowEndExclusive, rowTop + 1), grid.GridYs.Count);
 
             var parts = new List<string>();
-            CollectNamePartsForPositionRange(grid, key, rowTop, rowEndExclusive, parts, log);
-            SupplementNamePartsInVerticalBand(grid, key, rowTop, rowEndExclusive, parts);
+            var textCount = CollectNamePartsFromProperties(grid, key, rowTop, rowEndExclusive, parts, log);
 
             var rowEndInclusive = rowEndExclusive > rowTop ? rowEndExclusive - 1 : rowTop;
-            meta = new NameJoinMeta(rowTop, rowEndInclusive, parts.Count, rowEndExclusive, boundaryReason);
+            meta = new NameJoinMeta(rowTop, rowEndInclusive, parts.Count, rowEndExclusive, boundaryReason, textCount);
 
-            var shouldLogBoundary = parts.Count == 0 || key <= 10 || key == 51 || key == 52 || key == 57 || key == 70
+            var shouldLogBoundary = parts.Count == 0 || key == 1 || key == 4 || key == 5 || key == 45 || key == 52 || key == 98
+                || key <= 10 || key == 51 || key == 57 || key == 70
                 || key == 104 || key == 105 || key >= 53 && key <= 56 || key >= 106 && key <= 109;
             if (log != null && shouldLogBoundary)
             {
-                log.Info($"[NAME-BOUNDARY] scope={grid.ScopeIndex} key={key} rowTop={rowTop} rowMark={rowMark} merged={isMerged} rowEndEx={rowEndExclusive} reason={boundaryReason} parts={parts.Count}");
+                log.Info($"[NAME-BOUNDARY] scope={grid.ScopeIndex} key={key} rowTop={rowTop} rowMark={rowMark} merged={isMerged} rowEndEx={rowEndExclusive} reason={boundaryReason} parts={parts.Count} texts={textCount}");
             }
 
             return MTextPlainText.FormatForPaletteDisplay(string.Join(" ", parts).Trim());
@@ -2008,8 +2007,14 @@ namespace PosCounter.Net.SpecGrid
             var r = rowTop + 1;
             while (r < rows)
             {
+                var otherKey = ResolveMarkKeyAtRow(grid, r);
+                if (otherKey > 0 && otherKey != key)
+                {
+                    return r;
+                }
+
                 var mark = (grid.CellText[r, grid.ColMark] ?? string.Empty).Trim();
-                if (MTextPlainText.TryParseMarkKey(mark, out var otherKey) && otherKey != key)
+                if (otherKey <= 0 && MTextPlainText.TryParseMarkKey(mark, out otherKey) && otherKey != key)
                 {
                     return r;
                 }
@@ -2035,17 +2040,17 @@ namespace PosCounter.Net.SpecGrid
             var maxRow = rowTop;
             foreach (var t in grid.AllTexts)
             {
-                if (t.Col != grid.ColMark && (t.X < xL - eps || t.X > xR + eps))
+                if (t.Col != grid.ColMark && (t.DataX < xL - eps || t.DataX > xR + eps))
                 {
                     continue;
                 }
 
-                if (!MTextPlainText.TryParseMarkKey(t.Plain ?? string.Empty, out var tk) || tk != key)
+                if (!MTextPlainText.TryParseMarkKey(t.Raw ?? t.Plain ?? string.Empty, out var tk) || tk != key)
                 {
                     continue;
                 }
 
-                if (!CellIndex.TryGetCellIndex(t.X, t.Y, grid.GridXs, grid.GridYs, out var row, out _))
+                if (!CellIndex.TryGetCellIndex(t.DataX, t.DataY, grid.GridXs, grid.GridYs, out var row, out _))
                 {
                     continue;
                 }
@@ -2059,50 +2064,100 @@ namespace PosCounter.Net.SpecGrid
             return Math.Max(currentEnd, maxRow + 1);
         }
 
-        /// <summary>Добор имён по вертикали блока (если Row съехал после SplitNameColumnRows).</summary>
-        private static void SupplementNamePartsInVerticalBand(
-            ScopeGridResult grid,
-            int key,
-            int rowTop,
-            int rowEndExclusive,
-            List<string> parts)
+        private static int ResolveMarkKeyAtRow(ScopeGridResult grid, int row)
         {
-            if (grid.ColName < 0 || rowEndExclusive <= rowTop || grid.GridYs.Count == 0)
+            if (grid.RowToKeyMark != null && grid.RowToKeyMark.TryGetValue(row, out var key))
             {
-                return;
+                return key;
             }
 
-            var yTop = grid.GridYs[rowTop];
-            var yBottom = rowEndExclusive < grid.GridYs.Count
-                ? grid.GridYs[rowEndExclusive]
-                : grid.GridYs[grid.GridYs.Count - 1] - 1.0;
-            var xLeft = grid.GridXs[grid.ColName];
-            var xRight = grid.GridXs[grid.ColName + 1];
-            const double eps = 2.0;
-
-            var hits = grid.AllTexts
-                .Where(t => PassesCellLayerFilter(t, grid))
-                .Where(t => t.Col == grid.ColName || (t.X >= xLeft - eps && t.X <= xRight + eps))
-                .Where(t => t.Y <= yTop + eps && t.Y > yBottom - eps)
-                .OrderByDescending(t => t.Y)
-                .ThenBy(t => t.X);
-
-            foreach (var t in hits)
+            foreach (var kv in grid.KeyToRowMark)
             {
-                foreach (var line in MTextPlainText.EnumerateDisplayNameLines(t.Plain ?? t.Raw))
+                if (kv.Value == row)
                 {
-                    if (!MTextPlainText.IsAcceptableNameContinuation(line))
-                    {
-                        continue;
-                    }
-
-                    TryAddNamePartExact(parts, MTextPlainText.DecodeAutocadPercentCodes(line));
+                    return kv.Key;
                 }
             }
+
+            if (grid.ColMark >= 0 && grid.CellText != null && row >= 0 && row < grid.CellText.GetLength(0))
+            {
+                var mark = grid.CellText[row, grid.ColMark] ?? string.Empty;
+                if (MTextPlainText.TryParseMarkKey(mark, out var cellKey))
+                {
+                    return cellKey;
+                }
+            }
+
+            return 0;
         }
 
-        /// <summary>Сбор имени: от rowTop (верх блока марки), все строки до rowEndExclusive; DBText+MText, перекрытие по Y.</summary>
-        private static void CollectNamePartsForPositionRange(
+        private static int GetDominantRowForText(TextSample t, ScopeGridResult grid)
+        {
+            if (t.DominantRow >= 0)
+            {
+                return t.DominantRow;
+            }
+
+            return CellIndex.GetDominantRow(t, grid.GridYs, grid);
+        }
+
+        private static bool IsUpstreamBleedFromForeignMark(
+            ScopeGridResult grid,
+            int key,
+            int row,
+            TextSample t,
+            SpecGridLog log)
+        {
+            // Текст, привязанный к текущей строке марки — не отбрасывать.
+            if (t.Row == row)
+            {
+                var markAtRow = ResolveMarkKeyAtRow(grid, row);
+                if (markAtRow == key || markAtRow == 0)
+                {
+                    return false;
+                }
+            }
+
+            var dominantRow = GetDominantRowForText(t, grid);
+            if (dominantRow < 0 || dominantRow >= row)
+            {
+                return false;
+            }
+
+            var markAtDom = ResolveMarkKeyAtRow(grid, dominantRow);
+            if (markAtDom > 0 && markAtDom != key)
+            {
+                log?.Info(
+                    $"[NAME-BLEED] scope={grid.ScopeIndex} key={key} row={row} domRow={dominantRow} foreignMark={markAtDom} src={t.SourceIndex}");
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsAcceptableNameCandidate(string display)
+        {
+            if (string.IsNullOrWhiteSpace(display))
+            {
+                return false;
+            }
+
+            return MTextPlainText.NameScore(display) > 0
+                || MTextPlainText.IsAcceptableNameContinuation(display);
+        }
+
+        private static string GetDisplayText(TextSample t)
+        {
+            return MTextPlainText.PreferDisplayNameFromSpec(
+                MTextPlainText.SanitizeRawContents(t.Raw ?? t.Plain ?? string.Empty));
+        }
+
+        private static bool PartsContainStandalone(IReadOnlyList<string> parts)
+        {
+            return parts.Any(MTextPlainText.IsStandaloneProductName);
+        }
+
+        private static int CollectNamePartsFromProperties(
             ScopeGridResult grid,
             int key,
             int rowTop,
@@ -2112,12 +2167,12 @@ namespace PosCounter.Net.SpecGrid
         {
             if (grid.ColName < 0 || grid.GridXs.Count <= grid.ColName + 1 || grid.GridYs.Count == 0)
             {
-                return;
+                return 0;
             }
 
             if (rowTop < 0 || rowTop >= grid.GridYs.Count)
             {
-                return;
+                return 0;
             }
 
             rowEndExclusive = Math.Min(rowEndExclusive, grid.GridYs.Count);
@@ -2126,15 +2181,13 @@ namespace PosCounter.Net.SpecGrid
                 rowEndExclusive = Math.Min(rowTop + 1, grid.GridYs.Count);
             }
 
-            var rows = grid.CellText.GetLength(0);
-            var hitCount = 0;
+            var consumedSources = new HashSet<int>();
+            var textCount = 0;
 
             for (var r = rowTop; r < rowEndExclusive; r++)
             {
-                if (grid.ColMark >= 0
-                    && r < rows
-                    && MTextPlainText.TryParseMarkKey(grid.CellText[r, grid.ColMark] ?? string.Empty, out var rowKey)
-                    && rowKey != key)
+                var rowKey = ResolveMarkKeyAtRow(grid, r);
+                if (rowKey > 0 && rowKey != key)
                 {
                     continue;
                 }
@@ -2144,70 +2197,182 @@ namespace PosCounter.Net.SpecGrid
                     continue;
                 }
 
-                hitCount += CollectNamePartsFromNameCell(grid, r, parts);
-            }
-
-            // log [NAME-MERGE-ROWS] отключён
-        }
-
-        private static int CollectNamePartsFromNameCell(ScopeGridResult grid, int row, List<string> parts)
-        {
-            if (grid.ColName < 0 || row < 0 || row >= grid.GridYs.Count)
-            {
-                return 0;
-            }
-
-            var yTop = grid.GridYs[row];
-            var yBottom = row + 1 < grid.GridYs.Count ? grid.GridYs[row + 1] : yTop - 1.0;
-            var xLeft = grid.GridXs[grid.ColName];
-            var xRight = grid.GridXs[grid.ColName + 1];
-            const double eps = 2.0;
-
-            var rowHits = grid.AllTexts
-                .Where(t => PassesCellLayerFilter(t, grid))
-                .Where(t => t.Col == grid.ColName || (t.X >= xLeft - eps && t.X <= xRight + eps))
-                .Where(t => TextOverlapsRowBand(t, yTop, yBottom))
-                .OrderByDescending(t => t.Y)
-                .ThenBy(t => t.X)
-                .ToList();
-
-            var hitCount = 0;
-            foreach (var t in rowHits)
-            {
-                hitCount++;
-                foreach (var line in MTextPlainText.EnumerateDisplayNameLines(t.Plain ?? t.Raw))
+                var yTop = grid.GridYs[r];
+                var yBottom = r + 1 < grid.GridYs.Count ? grid.GridYs[r + 1] : yTop - 1.0;
+                List<TextSample> candidates;
+                if (grid.TextsByRow != null
+                    && grid.TextsByRow.TryGetValue(r, out var cached)
+                    && cached.Count > 0)
                 {
+                    candidates = cached
+                        .Where(t => TextOverlapsRowBand(t, yTop, yBottom, grid))
+                        .Where(t => !IsUpstreamBleedFromForeignMark(grid, key, r, t, log))
+                        .ToList();
+                }
+                else
+                {
+                    candidates = (grid.AllTexts ?? new List<TextSample>())
+                        .Where(t => PassesCellLayerFilter(t, grid))
+                        .Where(t => IsTextInColumnXBand(grid, grid.ColName, t))
+                        .Where(t => TextOverlapsRowBand(t, yTop, yBottom, grid))
+                        .Where(t => !IsUpstreamBleedFromForeignMark(grid, key, r, t, log))
+                        .ToList();
+                }
+
+                var winner = PickBestTextSampleForRow(grid, r, candidates, log);
+                if (winner == null)
+                {
+                    continue;
+                }
+
+                var winnerDisplay = GetDisplayText(winner);
+                if (PartsContainStandalone(parts) && MTextPlainText.IsStandaloneProductName(winnerDisplay))
+                {
+                    log?.Info($"[NAME-STOP] scope={grid.ScopeIndex} key={key} row={r} second standalone");
+                    break;
+                }
+
+                if (consumedSources.Contains(winner.SourceIndex))
+                {
+                    continue;
+                }
+
+                consumedSources.Add(winner.SourceIndex);
+                textCount++;
+                var addedAny = false;
+
+                foreach (var line in MTextPlainText.EnumerateDisplayNameLines(winner.Raw ?? winner.Plain))
+                {
+                    if (MTextPlainText.LooksLikeSectionHeaderLine(line))
+                    {
+                        log?.Info($"[NAME-SECTION] scope={grid.ScopeIndex} key={key} row={r} line=\"{TrimForLog(line, 40)}\"");
+                        continue;
+                    }
+
                     if (!MTextPlainText.IsAcceptableNameContinuation(line))
                     {
                         continue;
                     }
 
-                    TryAddNamePartExact(parts, MTextPlainText.DecodeAutocadPercentCodes(line));
+                    var decoded = MTextPlainText.DecodeAutocadPercentCodes(line);
+                    if (string.IsNullOrWhiteSpace(decoded))
+                    {
+                        continue;
+                    }
+
+                    TryAddNamePartExact(parts, decoded);
+                    addedAny = true;
+                }
+
+                if (addedAny && PartsContainStandalone(parts) && r + 1 < rowEndExclusive)
+                {
+                    // Следующая строка с другим standalone — остановимся на следующей итерации
                 }
             }
 
-            return hitCount;
+            return textCount;
+        }
+
+        private static TextSample PickBestTextSampleForRow(
+            ScopeGridResult grid,
+            int row,
+            List<TextSample> candidates,
+            SpecGridLog log)
+        {
+            if (candidates == null || candidates.Count == 0)
+            {
+                return null;
+            }
+
+            var filtered = candidates
+                .Where(t => PassesCellLayerFilter(t, grid))
+                .Where(t => !string.IsNullOrWhiteSpace(t.Raw ?? t.Plain))
+                .Select(t => (Sample: t, Display: GetDisplayText(t), Score: MTextPlainText.NameScore(GetDisplayText(t))))
+                .Where(x => IsAcceptableNameCandidate(x.Display))
+                .ToList();
+            if (filtered.Count == 0)
+            {
+                return null;
+            }
+
+            if (filtered.Count == 1)
+            {
+                return filtered[0].Sample;
+            }
+
+            int LayerRank(TextSample t)
+            {
+                var layer = t.Layer ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(grid.PrimaryNameLayer)
+                    && string.Equals(layer, grid.PrimaryNameLayer, StringComparison.OrdinalIgnoreCase))
+                {
+                    return 2;
+                }
+
+                if (grid.ExtraNameLayers.Contains(layer))
+                {
+                    return 1;
+                }
+
+                return 0;
+            }
+
+            var scored = filtered
+                .Select(x => (x.Sample, x.Display, x.Score, Rank: LayerRank(x.Sample)))
+                .ToList();
+
+            var best = scored
+                .OrderByDescending(x => x.Rank)
+                .ThenByDescending(x => x.Score)
+                .ThenByDescending(x => x.Display.Length)
+                .ThenByDescending(x => GetSortY(x.Sample))
+                .First();
+
+            if (scored.Count > 1)
+            {
+                var dropped = scored
+                    .Where(x => x.Sample.SourceIndex != best.Sample.SourceIndex)
+                    .Select(x => $"{x.Sample.Layer}(score={x.Score})")
+                    .Take(3);
+                log?.Info(
+                    $"[POSC] NAME-OVERLAY scope={grid.ScopeIndex} row={row} picked layer={best.Sample.Layer} score={best.Score} dropped={string.Join(", ", dropped)}");
+            }
+
+            return best.Sample;
+        }
+
+        private static bool TextOverlapsRowBand(TextSample t, double yTop, double yBottom, ScopeGridResult grid)
+        {
+            return TryGetRowOverlapFraction(t, yTop, yBottom, grid, out _);
         }
 
         private static bool TextOverlapsRowBand(TextSample t, double yTop, double yBottom, double minOverlapFraction = 0.42)
         {
-            const double eps = 2.0;
-            if (t.Y <= yTop + eps && t.Y > yBottom - eps)
-            {
-                return true;
-            }
-
             var bandH = Math.Abs(yTop - yBottom);
             if (bandH < 1.0)
             {
                 bandH = 1.0;
             }
 
-            var textHalfH = bandH * 0.38;
-            var textBottom = t.Y - textHalfH;
-            var textTop = t.Y + textHalfH * 0.25;
-            var overlap = Math.Min(textTop, yTop) - Math.Max(textBottom, yBottom);
-            return overlap > 0 && overlap / bandH >= minOverlapFraction;
+            var yMin = t.YMin;
+            var yMax = t.YMax;
+            if (Math.Abs(yMax - yMin) < 1e-6)
+            {
+                const double eps = 2.0;
+                if (t.DataY <= yTop + eps && t.DataY > yBottom - eps)
+                {
+                    return true;
+                }
+
+                var textHalfH = bandH * 0.38;
+                var textBottom = t.DataY - textHalfH;
+                var textTop = t.DataY + textHalfH * 0.25;
+                var overlap = Math.Min(textTop, yTop) - Math.Max(textBottom, yBottom);
+                return overlap > 0 && overlap / bandH >= minOverlapFraction;
+            }
+
+            var overlapExt = Math.Min(yMax, yTop) - Math.Max(yMin, yBottom);
+            return overlapExt > 0 && overlapExt / bandH >= minOverlapFraction;
         }
 
         private static void TryAddNamePartExact(List<string> parts, string part)
@@ -2340,11 +2505,13 @@ namespace PosCounter.Net.SpecGrid
             _cellAssignLogCount++;
         }
 
-        private static void AssignCells(List<TextSample> texts, double[] xs, double[] ys, int scopeIndex, SpecGridLog log)
+        private static void AssignCellsHeader(List<TextSample> texts, double[] xs, double[] ys)
         {
             foreach (var t in texts)
             {
-                if (CellIndex.TryGetCellIndex(t.X, t.Y, xs, ys, out var row, out var col))
+                t.X = t.HeaderX;
+                t.Y = t.HeaderY;
+                if (CellIndex.TryGetCellIndex(t.HeaderX, t.HeaderY, xs, ys, out var row, out var col))
                 {
                     t.Row = row;
                     t.Col = col;
@@ -2355,6 +2522,170 @@ namespace PosCounter.Net.SpecGrid
                     t.Col = -1;
                 }
             }
+        }
+
+        private static void AssignCellsData(List<TextSample> texts, double[] xs, double[] ys, ScopeGridResult result)
+        {
+            foreach (var t in texts)
+            {
+                t.X = t.DataX;
+                t.Y = t.DataY;
+
+                if (!CellIndex.TryGetCellIndex(t.DataX, t.DataY, xs, ys, out var rowByPoint, out var col))
+                {
+                    col = ResolveColumnByX(t.DataX, xs);
+                    rowByPoint = -1;
+                }
+
+                t.Col = col;
+
+                var rowByExtent = FindBestRowByExtent(t, ys, result);
+                if (result.ColMark >= 0 && col == result.ColMark)
+                {
+                    t.Row = rowByPoint >= 0 ? rowByPoint : rowByExtent;
+                }
+                else if (rowByExtent >= 0)
+                {
+                    t.Row = rowByExtent;
+                }
+                else
+                {
+                    t.Row = rowByPoint;
+                }
+
+                t.DominantRow = CellIndex.GetDominantRow(t, ys, result);
+            }
+        }
+
+        private static int ResolveColumnByX(double x, double[] xs)
+        {
+            const double eps = CellIndex.CellIndexEps;
+            for (var i = 0; i < xs.Length - 1; i++)
+            {
+                if (x >= xs[i] - eps && x < xs[i + 1] + eps)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private static int FindBestRowByExtent(TextSample t, double[] ys, ScopeGridResult result)
+        {
+            return CellIndex.GetDominantRow(t, ys, result);
+        }
+
+        private static bool TryGetRowOverlapFraction(
+            TextSample t,
+            double bandTop,
+            double bandBottom,
+            ScopeGridResult result,
+            out double fraction)
+        {
+            fraction = 0;
+            var bandH = Math.Abs(bandTop - bandBottom);
+            if (bandH < 1.0)
+            {
+                bandH = 1.0;
+            }
+
+            var yMin = t.YMin;
+            var yMax = t.YMax;
+            if (Math.Abs(yMax - yMin) < 1e-6)
+            {
+                var halfH = GetEffectiveTextHeight(t, result) * 0.5;
+                yMin = t.DataY - halfH;
+                yMax = t.DataY + halfH;
+            }
+
+            var overlap = Math.Min(yMax, bandTop) - Math.Max(yMin, bandBottom);
+            if (overlap <= 0)
+            {
+                return false;
+            }
+
+            var minFraction = t.IsMText && Math.Abs(t.YMax - t.YMin) > 1e-6 ? 0.30 : 0.50;
+            fraction = overlap / bandH;
+            return fraction >= minFraction;
+        }
+
+        private static double GetEffectiveTextHeight(TextSample t, ScopeGridResult result)
+        {
+            if (t.TextHeight > 1e-6)
+            {
+                return t.TextHeight;
+            }
+
+            if (result != null && result.PrimaryNameTextHeight > 1e-6)
+            {
+                return result.PrimaryNameTextHeight;
+            }
+
+            if (result != null && result.MedianRowStep > 1e-6)
+            {
+                return result.MedianRowStep * 0.75;
+            }
+
+            return SpecGridService.QtyTextHeightFallback;
+        }
+
+        private static double ComputePrimaryNameTextHeight(List<TextSample> texts, ScopeGridResult result)
+        {
+            if (result.ColName < 0 || string.IsNullOrWhiteSpace(result.PrimaryNameLayer))
+            {
+                return 0;
+            }
+
+            var heights = texts
+                .Where(t => t.Col == result.ColName
+                    && t.Row >= result.RowDataStart
+                    && string.Equals(t.Layer ?? string.Empty, result.PrimaryNameLayer, StringComparison.OrdinalIgnoreCase)
+                    && t.TextHeight > 1e-6)
+                .Select(t => t.TextHeight)
+                .OrderBy(h => h)
+                .ToList();
+            if (heights.Count == 0)
+            {
+                return 0;
+            }
+
+            return heights[heights.Count / 2];
+        }
+
+        private static void BuildTextsByRow(ScopeGridResult result)
+        {
+            result.TextsByRow = new Dictionary<int, List<TextSample>>();
+            if (result.ColName < 0)
+            {
+                return;
+            }
+
+            foreach (var t in result.AllTexts ?? new List<TextSample>())
+            {
+                if (t.Row < result.RowDataStart || !IsTextInColumnXBand(result, result.ColName, t))
+                {
+                    continue;
+                }
+
+                if (!PassesCellLayerFilter(t, result))
+                {
+                    continue;
+                }
+
+                if (!result.TextsByRow.TryGetValue(t.Row, out var list))
+                {
+                    list = new List<TextSample>();
+                    result.TextsByRow[t.Row] = list;
+                }
+
+                list.Add(t);
+            }
+        }
+
+        private static double GetSortY(TextSample t)
+        {
+            return t.IsMText && Math.Abs(t.YMax - t.YMin) > 1e-6 ? t.YMax : t.DataY;
         }
 
         private static void SplitNameColumnRows(
@@ -2431,17 +2762,22 @@ namespace PosCounter.Net.SpecGrid
             return steps.Count == 0 ? 0 : steps.OrderBy(x => x).ElementAt(steps.Count / 2);
         }
 
-        private static TextSample CreateTextSampleFromMText(MText mt, int scopeIndex, SpecGridLog log)
+        private static TextSample CreateTextSampleFromMText(MText mt, int sourceIndex, int scopeIndex, SpecGridLog log)
         {
-            var pt = mt.Location;
+            var dataPt = mt.Location;
+            var headerPt = dataPt;
+            var yMin = dataPt.Y;
+            var yMax = dataPt.Y;
             var method = "Location";
             try
             {
                 var ex = mt.GeometricExtents;
-                pt = new Point3d(
+                headerPt = new Point3d(
                     (ex.MinPoint.X + ex.MaxPoint.X) * 0.5,
                     (ex.MinPoint.Y + ex.MaxPoint.Y) * 0.5,
                     mt.Location.Z);
+                yMin = ex.MinPoint.Y;
+                yMax = ex.MaxPoint.Y;
                 method = "ExtentsCenter";
             }
             catch
@@ -2449,19 +2785,22 @@ namespace PosCounter.Net.SpecGrid
                 // fallback Location
             }
 
-            var sample = CreateTextSample(mt, mt.Contents, pt);
-            LogCellAssign(log, scopeIndex, "MText", method, pt, (sample.Plain ?? string.Empty).Length);
+            var sample = CreateTextSample(mt, mt.Contents, headerPt, dataPt, yMin, yMax, mt.TextHeight, sourceIndex);
+            LogCellAssign(log, scopeIndex, "MText", method, headerPt, (sample.Plain ?? string.Empty).Length);
             return sample;
         }
 
-        private static TextSample CreateTextSampleFromDbText(DBText db, int scopeIndex, SpecGridLog log)
+        private static TextSample CreateTextSampleFromDbText(DBText db, int sourceIndex, int scopeIndex, SpecGridLog log)
         {
-            var pt = GetDbTextPoint(db);
+            var dataPt = GetDbTextPoint(db);
+            var headerPt = dataPt;
+            var yMin = dataPt.Y;
+            var yMax = dataPt.Y;
             var method = "AlignmentPoint";
             try
             {
                 var ex = db.GeometricExtents;
-                pt = new Point3d(
+                headerPt = new Point3d(
                     (ex.MinPoint.X + ex.MaxPoint.X) * 0.5,
                     (ex.MinPoint.Y + ex.MaxPoint.Y) * 0.5,
                     db.Position.Z);
@@ -2472,12 +2811,20 @@ namespace PosCounter.Net.SpecGrid
                 // пустой TEXT или GeometricExtents недоступен — GetDbTextPoint
             }
 
-            var sample = CreateTextSample(db, db.TextString, pt);
-            LogCellAssign(log, scopeIndex, "DBText", method, pt, (sample.Plain ?? string.Empty).Length);
+            var sample = CreateTextSample(db, db.TextString, headerPt, dataPt, yMin, yMax, db.Height, sourceIndex);
+            LogCellAssign(log, scopeIndex, "DBText", method, headerPt, (sample.Plain ?? string.Empty).Length);
             return sample;
         }
 
-        private static TextSample CreateTextSample(Entity ent, string raw, Point3d pt)
+        private static TextSample CreateTextSample(
+            Entity ent,
+            string raw,
+            Point3d headerPt,
+            Point3d dataPt,
+            double yMin,
+            double yMax,
+            double textHeight,
+            int sourceIndex)
         {
             var plain = MTextPlainText.SanitizeRawContents(raw);
             return new TextSample
@@ -2485,8 +2832,16 @@ namespace PosCounter.Net.SpecGrid
                 Layer = MTextPlainText.NormalizeLayer(ent.Layer),
                 Plain = plain,
                 Raw = raw ?? string.Empty,
-                X = pt.X,
-                Y = pt.Y,
+                HeaderX = headerPt.X,
+                HeaderY = headerPt.Y,
+                DataX = dataPt.X,
+                DataY = dataPt.Y,
+                X = headerPt.X,
+                Y = headerPt.Y,
+                YMin = yMin,
+                YMax = yMax,
+                TextHeight = textHeight,
+                SourceIndex = sourceIndex,
                 IsMText = ent is MText
             };
         }

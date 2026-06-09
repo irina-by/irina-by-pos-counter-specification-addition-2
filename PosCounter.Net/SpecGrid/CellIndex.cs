@@ -130,5 +130,136 @@ namespace PosCounter.Net.SpecGrid
 
             return false;
         }
+
+        /// <summary>Строка с максимальным overlap [yMin,yMax] с полосами gridYs.</summary>
+        public static bool TryGetRowByExtent(
+            double yMin,
+            double yMax,
+            IReadOnlyList<double> gridYs,
+            double minOverlapFraction,
+            out int row,
+            out double overlapFraction)
+        {
+            row = -1;
+            overlapFraction = 0;
+            if (gridYs == null || gridYs.Count < 2)
+            {
+                return false;
+            }
+
+            var bestOverlap = 0.0;
+            for (var r = 0; r < gridYs.Count - 1; r++)
+            {
+                var bandTop = gridYs[r];
+                var bandBottom = gridYs[r + 1];
+                var bandH = Math.Abs(bandTop - bandBottom);
+                if (bandH < 1.0)
+                {
+                    bandH = 1.0;
+                }
+
+                var overlap = Math.Min(yMax, bandTop) - Math.Max(yMin, bandBottom);
+                if (overlap <= 0)
+                {
+                    continue;
+                }
+
+                var fraction = overlap / bandH;
+                if (fraction >= minOverlapFraction && fraction > bestOverlap + 1e-9)
+                {
+                    bestOverlap = fraction;
+                    row = r;
+                    overlapFraction = fraction;
+                }
+            }
+
+            return row >= 0;
+        }
+
+        public static int GetDominantRow(TextSample t, IReadOnlyList<double> gridYs, ScopeGridResult result)
+        {
+            if (t == null || gridYs == null || gridYs.Count < 2)
+            {
+                return -1;
+            }
+
+            var yMin = t.YMin;
+            var yMax = t.YMax;
+            var hasExtent = Math.Abs(yMax - yMin) > 1e-6;
+            if (!hasExtent)
+            {
+                var halfH = ResolveEffectiveHalfHeight(t, result);
+                yMin = t.DataY - halfH;
+                yMax = t.DataY + halfH;
+            }
+
+            var minFraction = t.IsMText && hasExtent ? 0.30 : 0.50;
+            if (!TryGetRowByExtent(yMin, yMax, gridYs, minFraction, out var row, out _))
+            {
+                return -1;
+            }
+
+            var bestOverlap = 0.0;
+            var bestRow = row;
+            for (var r = 0; r < gridYs.Count - 1; r++)
+            {
+                var bandTop = gridYs[r];
+                var bandBottom = gridYs[r + 1];
+                var bandH = Math.Abs(bandTop - bandBottom);
+                if (bandH < 1.0)
+                {
+                    bandH = 1.0;
+                }
+
+                var overlap = Math.Min(yMax, bandTop) - Math.Max(yMin, bandBottom);
+                if (overlap <= 0)
+                {
+                    continue;
+                }
+
+                var fraction = overlap / bandH;
+                if (fraction < minFraction)
+                {
+                    continue;
+                }
+
+                if (fraction > bestOverlap + 1e-9)
+                {
+                    bestOverlap = fraction;
+                    bestRow = r;
+                }
+                else if (Math.Abs(fraction - bestOverlap) < 1e-9)
+                {
+                    var curMid = (gridYs[bestRow] + gridYs[bestRow + 1]) * 0.5;
+                    var newMid = (gridYs[r] + gridYs[r + 1]) * 0.5;
+                    if (Math.Abs(t.DataY - newMid) < Math.Abs(t.DataY - curMid))
+                    {
+                        bestRow = r;
+                    }
+                }
+            }
+
+            return bestRow;
+        }
+
+        private static double ResolveEffectiveHalfHeight(TextSample t, ScopeGridResult result)
+        {
+            if (t.TextHeight > 1e-6)
+            {
+                return t.TextHeight * 0.5;
+            }
+
+            if (result != null && result.PrimaryNameTextHeight > 1e-6)
+            {
+                return result.PrimaryNameTextHeight * 0.5;
+            }
+
+            if (result != null && result.MedianRowStep > 1e-6)
+            {
+                return result.MedianRowStep * 0.375;
+            }
+
+            return SpecGridService.QtyTextHeightFallback * 0.5;
+        }
     }
 }

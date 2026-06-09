@@ -119,6 +119,29 @@
 - Раньше `MergeAxisClusters` всегда сортировал по возрастанию → `GridYs` переворачивался → `TryGetCellIndex` не находил строки (`Row=-1`) → `BindKeys` и подсчёт марок = 0.
 - План: `plans/fix-grid-ys-merge-order.md`
 
+## Properties KV pipeline (properties-kv-v2)
+
+План: `properties_kv_v2_f507a30c.plan.md` (заменяет `strict_properties_kv_92255370`).
+
+- **Ключ:** `BindKeysFromProperties` — `Contents`/`Raw` из ColMark, геометрия `DataX`/`DataY`; `KeyToRowMark` заполняется только здесь. Конфликт двух марок в одной строке → победитель по `CellText` или верхний по `DataY`; CMD `[POSC] Марка: наложение…`.
+- **Значение:** `CollectNamePartsFromProperties` — `Contents` из ColName по диапазону строк марки; `PickNameTextForRow` — один текст на строку (PrimaryNameLayer → ExtraNameLayers → NameScore); CMD `[POSC] NAME-OVERLAY…`.
+- **Геометрия:** `TextSample` — `HeaderX/Y` (шапка, ExtentsCenter), `DataX/Y` (Position/Location), `YMin`/`YMax`, `TextHeight`, `SourceIndex`. Pass-1 `AssignCellsHeader`; pass-2 `AssignCellsData` (экстент для ColName, точка для ColMark).
+- **Экстент:** `TryGetRowOverlapFraction` / `TextOverlapsRowBand`; fallback высоты: `TextHeight` → `PrimaryNameTextHeight` → `MedianRowStep` → `QtyTextHeightFallback`.
+- **Spanning MText:** `SourceIndex` + `consumedSources` — `\P`-строки из одного объекта не дублируются на нижних строках.
+- **Парсер марки:** `TryParseMarkKey` — хвостовые `. , ; : ) ]` (`43.` → 43).
+- **Палитра:** без изменений — `MarkNamePairs` → `BuildCombinedMarkNames` → `ApplyMarkNamesToPalette`.
+- **Лог:** `[KV-PAIR]`, `[NAME-JOIN]` с `texts=N`.
+
+## Properties KV v2.1 — bleed / stop (kv-v2-bleed-fix)
+
+- `CellIndex.TryGetRowByExtent`, `GetDominantRow`; `TextSample.DominantRow` в `AssignCellsData`.
+- `RowToKeyMark` + `ResolveMarkKeyAtRow` — properties-first границы марок.
+- `IsUpstreamBleedFromForeignMark` — skip текста, чей dominant row принадлежит другой марке; **не** отбрасывает `t.Row == row`; CMD `[NAME-BLEED]`.
+- `PickBestTextSampleForRow` — `NameScore > 0` или `IsAcceptableNameContinuation`; CMD `[NAME-OVERLAY]`.
+- `StopAtSecondStandaloneName` — break при втором standalone; CMD `[NAME-STOP]`.
+- `LooksLikeSectionHeaderLine`, `IsStandaloneProductName` в `MTextPlainText`; CMD `[NAME-SECTION]`.
+- `TextsByRow` — по `t.Row`; fallback на `AllTexts`, если кэш строки пуст.
+
 ## Ключевые классы
 
 - `Commands.cs` — `Initialize` → auto `ShowPalette`; POSC + POSC2_*
