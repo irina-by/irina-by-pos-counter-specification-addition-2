@@ -154,3 +154,16 @@
 > [2026-06-09] Задача: актуализация документации — factual_program_architecture + README + DEVELOPER + INSTRUCTION_ENGINEER + Работа программы.
 > Правка: обновлён `.cursor/plans/factual_program_architecture.plan.md` (grid scan, ResolveNameForKey, native Table, fix row1); удалены устаревшие plan/implementation файлы; синхронизированы README, DEVELOPER, INSTRUCTION_ENGINEER, Работа программы.md.
 > Результат: ДОКУМЕНТАЦИЯ — код не менялся.
+
+> [2026-06-09] Задача: план fix_header_recognition_ac2016 — нестабильное распознавание спецификации (AC 2016/2026).
+> Правка: `RebindScopeKeysAndNames` после pass2; `TryInferColumnsFromData` + palette keys; стабильный `AutoDetectGridLayer`; `ResolveGridLayerForScope`; ColMark+ColName без обязательного ColQty; spec guard + qtyByKey из всех строк; редактируемое наименование в палитре + экспорт 4 колонки; CMD `gridLayer`, data-band hint. Docs.
+> Результат: СБОРКА net8.0-windows OK (0 errors), `dll 2026\PosCounter.Net.dll` обновлена; ручной тест — 5× spec на чертеже пользователя, Ушко/35NK (NETLOAD).
+
+> [2026-06-09] Задача: план fix_multiline_name_merge — вторая строка наименования (продолжение без ГОСТ) не склеивается в палитру.
+> Правка: `TableGrid.cs` — `ResolveNameForKey`: `rowEndExclusive = min(nextKeyRow, max(markBlockEnd, rowTop+1))`; `useCellTextOnly` только при `AllNameRowsHaveCellText`; `CollectNamePartsFromNameCell` — `[NAME-STOP]` только на чужой марке; CMD `[NAME-BOUNDARY]` с `nextKeyRow`/`markBlockEnd`/`rowEndEx`/`cellOnly`. Docs.
+> Результат: СБОРКА net8.0-windows OK (0 errors) в `bin\Release\net8.0-windows-build` — `dll 2026` и `bin\Release\net8.0-windows` заняты AutoCAD (NETLOAD); ручной тест — марка с 2 строками названия (NETLOAD после закрытия AC или из build-папки).
+
+> [2026-06-09] Задача: план fix_multiline_name_v2 — key=51: в KV только 1 строка имени (после v1 всё ещё не работает).
+> Причина: `rowEndExclusive` обрезался по `KeyToRowTopSub` следующей марки (совпадал со строкой продолжения); `IsSectionHeaderRow` пропускала 2-ю строку наименования как «секцию без марки».
+> Правка: `GetNextKeyRowMarkExclusive` (KeyToRowMark); новая формула `rowEndExclusive`; `IsNameContinuationRow` + исключение в 3 collect-путях и `AllNameRowsHaveCellText`; CMD `nextMarkRow`. Docs.
+> Результат: СБОРКА net8.0-windows OK (0 errors), `dll 2026\PosCounter.Net.dll` обновлена; ручной тест key=51 — `[NAME-BOUNDARY] nextMarkRow/rowEndEx`, `[KV-PAIR]` 2 строки (NETLOAD).

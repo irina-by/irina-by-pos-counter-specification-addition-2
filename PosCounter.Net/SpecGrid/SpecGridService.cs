@@ -70,16 +70,24 @@ namespace PosCounter.Net.SpecGrid
                         var builtScopes = new List<ScopeGridResult>();
                         for (var i = 0; i < tablePicks.Count; i++)
                         {
-                            var gridLayer = i == 0 ? null : SpecGridSession.SharedGridLayer;
-                            var scope = TableGridBuilder.Build(i, tablePicks[i], tr, gridLayer, log);
+                            var hint = i > 0 ? SpecGridSession.SharedGridLayer : null;
+                            var scope = TableGridBuilder.Build(i, tablePicks[i], tr, hint, log);
+                            if (scope.Valid
+                                && (scope.ColMark < 0 || scope.ColName < 0)
+                                && TableGridBuilder.TryInferColumnsFromData(scope, qtyByKey, log))
+                            {
+                                TableGridBuilder.RebindScopeKeysAndNames(
+                                    scope,
+                                    scope.HorizForBind,
+                                    log,
+                                    passLabel: "infer-data");
+                                TableGridBuilder.FillMarkNamesFromMergeGroupsPublic(scope, log);
+                            }
+
                             builtScopes.Add(scope);
                             if (i == 0 && !string.IsNullOrWhiteSpace(scope.GridLayer))
                             {
                                 SpecGridSession.SharedGridLayer = scope.GridLayer;
-                            }
-                            else if (i > 0 && !scope.Valid && builtScopes[0].Valid)
-                            {
-                                builtScopes[i] = TableGridBuilder.Build(i, tablePicks[i], tr, builtScopes[0].GridLayer, log);
                             }
                         }
 
@@ -152,12 +160,20 @@ namespace PosCounter.Net.SpecGrid
                 var mark = DescribeHeaderColumn(scope, scope.ColMark);
                 var name = DescribeHeaderColumn(scope, scope.ColName);
                 var qty = DescribeHeaderColumn(scope, scope.ColQty);
+                var inferred = scope.ColumnsInferredFromData ? " (столбцы по данным)" : string.Empty;
                 var msg =
-                    $"[POSC] Распознана шапка (таблица {scopeNum}): " +
+                    $"[POSC] Распознана шапка (таблица {scopeNum}){inferred}: " +
                     $"Марка — {(scope.ColMark >= 0 ? $"столбец {scope.ColMark} «{mark}»" : "не найдена")}; " +
                     $"Наименование — {(scope.ColName >= 0 ? $"столбец {scope.ColName} «{name}»" : "не найдено")}; " +
                     $"Кол. — {(scope.ColQty >= 0 ? $"столбец {scope.ColQty} «{qty}»" : "не найдена")}.";
                 SpecGridLog.WriteCommandLine(doc, msg);
+
+                if (!string.IsNullOrWhiteSpace(scope.GridLayer))
+                {
+                    SpecGridLog.WriteCommandLine(
+                        doc,
+                        $"[POSC] Сетка таблицы {scopeNum}: gridLayer=«{scope.GridLayer}» merged={scope.GridAxesMergedFromMixedLayers}");
+                }
 
                 if (scope.HeaderEndRow > 0 || scope.RowDataStart > 0)
                 {
@@ -241,8 +257,14 @@ namespace PosCounter.Net.SpecGrid
                         $"[POSC] Заголовок столбца Наименование не прочитан (столбец {scope.ColName}) — проверьте MText/слой в шапке.");
                 }
 
-                if (scope.ColMark < 0 || scope.ColQty < 0)
+                if (scope.ColMark < 0 || scope.ColName < 0)
                 {
+                    var dataHint = TableGridBuilder.FormatHeaderDataBandHint(scope);
+                    if (!string.IsNullOrWhiteSpace(dataHint))
+                    {
+                        SpecGridLog.WriteCommandLine(doc, dataHint);
+                    }
+
                     var diag = TableGridBuilder.BuildHeaderDiagnosticMessage(scope);
                     if (!string.IsNullOrWhiteSpace(diag))
                     {

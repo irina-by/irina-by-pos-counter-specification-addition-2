@@ -227,10 +227,29 @@
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
-                    <DataGridTemplateColumn Header="Наименование" Width="2*" MinWidth="220">
+                    <DataGridTemplateColumn Header="Наименование" Width="2*" MinWidth="220" IsReadOnly="False">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding NameFromSpec}" TextWrapping="Wrap" Margin="4,4" VerticalAlignment="Top"/>
+                                <TextBox Text="{Binding Data.NameFromSpec, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                         TextWrapping="Wrap"
+                                         AcceptsReturn="True"
+                                         VerticalScrollBarVisibility="Auto"
+                                         MinHeight="24"
+                                         Margin="2,2"
+                                         VerticalAlignment="Top"
+                                         BorderThickness="0"
+                                         Background="Transparent">
+                                    <TextBox.Style>
+                                        <Style TargetType="TextBox">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsSummary}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBox.Style>
+                                </TextBox>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>

@@ -2,7 +2,7 @@
 
 **Версия:** 4.2.0-table-grid-lines  
 **Сборки:** `dll 2016` (net46), `dll 2026` (net8.0-windows)  
-**Дата актуализации:** 2026-06-09 (grid scan шапки, ResolveNameForKey, fix row1, native Table)
+**Дата актуализации:** 2026-06-09 (многострочное наименование, grid scan шапки, ResolveNameForKey, fix row1, native Table)
 
 ---
 
@@ -174,7 +174,9 @@ PosCounter.Net/
 6. `BuildCellMatrix(filterTableLayers: false)`.
 7. `EstimateHeaderEndRow(filteredH)`.
 8. **`ApplyHeaderBoundaryFromGridScan`** — первая data-строка по скану CellText (марка / наименование+qty).
-9. `DetectHeader` → **`DetectHeaderByGridRows`** → fallback `DetectHeaderByColumns` → last-resort top-band.
+9. `DetectHeader` (pass1) → **`DetectHeaderByGridRows`** → fallback `DetectHeaderByColumns` → last-resort top-band.
+10. pass2 `AssignCellsData` → `CellText` → **`RebindScopeKeysAndNames`** (повторный `DetectHeader` + `BindKeys`).
+11. При `ColMark<0` или `ColName<0`: **`TryInferColumnsFromData`** (пересечение с `qtyByKey` палитры) → rebind.
 10. `ComputeRowDataStart(horiz: null)` — `searchFrom` из grid scan (`RowDataStart`), **без** принудительного min row 2; `ClampRowDataStartToGridScan`.
 11. `BuildPrimaryNameLayer`, `BuildTableContentLayers`.
 12. `MedianRowStep`, `PrimaryNameTextHeight`.
@@ -185,11 +187,9 @@ PosCounter.Net/
 14. `SplitNameColumnRowsData` — разнос NAME по строкам (DataY).
 15. `BuildTextsByRow`.
 16. `BuildCellMatrix(filterTableLayers: true)`.
-17. `ComputeRowDataStart(filteredH)`.
-18. **`BindKeysFromProperties`** — ключ.
-19. `BindKeys` — границы блоков.
-20. `AlignRowDataStartToFirstMark`.
-21. **`FillMarkNamesFromMergeGroups`** — значение.
+17. **`RebindScopeKeysAndNames`** — повторный grid scan + `DetectHeader` + `BindKeys` на pass2 CellText.
+18. **`FillMarkNamesFromMergeGroups`** — значение.
+19. В `RunSelectSpecification`: при провале шапки — **`TryInferColumnsFromData`** (overlap с палитрой) → rebind.
 
 ---
 
@@ -201,7 +201,9 @@ PosCounter.Net/
 |-------|----------------------|-----------|
 | `TryGetHeaderTopTextBandY` | есть тексты (fallback CMD) | полоса maxY−2000..maxY — **одинаково для всех таблиц** |
 | `ApplyHeaderBoundaryFromGridScan` | после pass-1 CellText | скан строк 0..N: первая строка с маркой или наименованием-данными → `HeaderEndRow`/`RowDataStart` |
-| `DetectHeaderByGridRows` | primary | scoring ColMark/ColName/ColQty только по строкам `0 .. HeaderEndRow-1` |
+| `RebindScopeKeysAndNames` | pass2 | `ApplyHeaderBoundaryFromGridScan` + `DetectHeader` + `BindKeys` на data CellText |
+| `TryInferColumnsFromData` | fallback | ColMark/ColName по данным ячеек + overlap с палитрой; `ColumnsInferredFromData` |
+| `DetectHeaderByGridRows` | primary | успех при `ColMark≥0 && ColName≥0` (ColQty опционально для имён) |
 | `DetectHeaderByColumns` | fallback | `BuildHeaderTextForColumn` + GridYs |
 | `DetectHeaderByTopTextBand` | last-resort | Y-полоса + фильтр `Row < HeaderEndRow`, без цифр-марок |
 | `ScoreQtyHeader` | scoring «Кол.» | `кол.` +30, `кол` +20; **без** «ед»; штраф −50 для «масса»/«обознач»/«примеч» |
@@ -257,13 +259,28 @@ PosCounter.Net/
 
 `FillMarkNamesFromMergeGroups` / `FillMarkNamesFromAcadTableCells` → **`ResolveNameForKey(key)`** (LINE, native Table, N scopes).
 
-**Правило:** для марки `key` — верхняя строка блока в ColMark (`ResolveNameRowTopForKey`), имя из `CellText` + dual-pass `AllTexts` (LINE) при недостаточном CellText, fallback `CellText[rowMark, ColName]` и соседние col ±1, лог `[KV-ANCHOR]`.
+**Правило:** для марки `key` — верхняя строка блока в ColMark (`ResolveNameRowTopForKey`), диапазон строк `[rowTop, rowEndExclusive)` для сбора имён, `CellText` + dual-pass `AllTexts` (LINE) при недостаточном CellText, fallback `CellText[rowMark, ColName]` и соседние col ±1, лог `[KV-ANCHOR]`.
+
+**Диапазон строк имени (`rowEndExclusive`):**
+
+```text
+markBlockEnd = KeyToMarkBlockEnd[key] или GetMarkBlockEndExclusive(rowTop, key)
+nextMarkRow = GetNextKeyRowMarkExclusive(key)   // KeyToRowMark следующей марки, НЕ rowTopSub
+rowEndExclusive = min(markBlockEnd, nextMarkRow) при nextMarkRow > rowTop
+rowEndExclusive = max(rowEndExclusive, rowTop + 1), min(..., GridRowCount)
+```
+
+`GetNextKeyRowExclusive` (rowTopSub) используется для ColQty, **не** для склейки имени: при объединённой ячейке «Поз.» rowTopSub следующей марки может совпадать со строкой продолжения предыдущего имени и обрезать диапазон до одной строки.
+
+**Продолжение имени vs секция:** `IsNameContinuationRow(key, row)` — строка внутри `[rowMark, markBlockEnd)` без своей цифры; такие строки **не** пропускаются как `IsSectionHeaderRow` в путях KV/value (`CollectNamePartsFromCellText`, `CollectNamePartsForPositionRange`, `SupplementNamePartsInVerticalBand`, `AllNameRowsHaveCellText`).
+
+CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `markBlockEnd`, `rowEndEx`, `cellOnly`.
 
 **Dedupe (MText+MText):**
 
 | Шаг | Метод | Правило |
 |-----|-------|---------|
-| cell-only | `ResolveNameForKey` | `cellJoined.Length ≥ 20` → без AllTexts pass, `[NAME-DEDUPE] reason=cell-only` |
+| cell-only | `ResolveNameForKey` | `cellJoined.Length ≥ 20` **и** `AllNameRowsHaveCellText(rowTop..rowEndEx)` → без AllTexts pass, `[NAME-DEDUPE] reason=cell-only` |
 | filter | `FilterTextPartsNotInCellText` | AllTexts часть не добавлять, если уже в cellJoined |
 | merge rows | `TryAddNamePartExact` | dedupe по строкам merge-блока |
 | phrase | `CollapseDuplicateNamePhrase` | «A A» → «A» |
@@ -278,7 +295,7 @@ PosCounter.Net/
 Для `r = rowTop .. rowEndExclusive-1`:
 
 - skip: `ResolveMarkKeyAtRow(r) != 0 && != key`.
-- skip: `IsSectionHeaderRow(r)`.
+- skip: `IsSectionHeaderRow(r)` кроме `IsNameContinuationRow(key, r)`.
 - `CollectNamePartsFromNameCell`.
 
 **Фильтры в `CollectNamePartsFromNameCell`:**
@@ -290,7 +307,7 @@ PosCounter.Net/
 | `TextOverlapsRowBand` | overlap ≥30% MText / ≥42% point |
 | **`NameTextBelongsToMarkKey`** | owner mark == key |
 
-**Без PickBest** — все hits добавляются. `consumedSources` — dedup SourceIndex. `[NAME-STOP]` — второй standalone.
+**Без PickBest** — все hits добавляются. `consumedSources` — dedup SourceIndex. `[NAME-STOP]` — только если второй standalone на строке с **чужой** маркой (`ResolveMarkKeyAtRow != key`); продолжение имени той же марки на следующей строке блока не обрывает склейку.
 
 ### Pass 2 — `SupplementNamePartsInVerticalBand`
 

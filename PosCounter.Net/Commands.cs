@@ -30,6 +30,7 @@ namespace PosCounter.Net
         {
             try
             {
+                SpecGridSession.ClearScopes();
                 AcApp.Idle += AutoOpenPaletteAfterNetLoad;
             }
             catch
@@ -220,6 +221,10 @@ namespace PosCounter.Net
             catch
             {
                 // never throw from command
+            }
+            finally
+            {
+                PaletteHost.ExitSpecPick();
             }
         }
 

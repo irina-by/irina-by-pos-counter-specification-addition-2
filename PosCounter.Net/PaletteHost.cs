@@ -40,6 +40,7 @@ namespace PosCounter.Net
         private static bool _wpfReattached;
         private static bool _nativeNudged;
         private static bool _initialLocationSet;
+        private static int _specPickRunning;
 
         private const uint SWP_NOMOVE = 0x0002;
         private const uint SWP_NOZORDER = 0x0004;
@@ -216,25 +217,6 @@ namespace PosCounter.Net
 
             try
             {
-                var built = false;
-                Dictionary<int, int> visibleMap = null;
-                control.Dispatcher.Invoke(() =>
-                {
-                    built = control.TryBuildQtyByKeyFromVisibleRows(out visibleMap);
-                });
-                if (built && visibleMap != null && visibleMap.Count > 0)
-                {
-                    qtyByKey = visibleMap;
-                    return true;
-                }
-            }
-            catch
-            {
-                // fallback below
-            }
-
-            try
-            {
                 Dictionary<int, int> snapshotMap = null;
                 control.Dispatcher.Invoke(() =>
                 {
@@ -250,6 +232,12 @@ namespace PosCounter.Net
             }
         }
 
+        internal static bool TryEnterSpecPick() =>
+            System.Threading.Interlocked.CompareExchange(ref _specPickRunning, 1, 0) == 0;
+
+        internal static void ExitSpecPick() =>
+            System.Threading.Interlocked.Exchange(ref _specPickRunning, 0);
+
         internal static void RequestSelectSpec()
         {
             try
@@ -260,11 +248,18 @@ namespace PosCounter.Net
                     return;
                 }
 
+                if (!TryEnterSpecPick())
+                {
+                    _control?.Dispatcher.BeginInvoke(new Action(() =>
+                        _control?.SetStatusFromHost("Выбор спецификации уже выполняется — дождитесь завершения.")));
+                    return;
+                }
+
                 doc.SendStringToExecute("_.POSC2_SPEC_INTERNAL ", true, false, false);
             }
             catch
             {
-                // ignore
+                ExitSpecPick();
             }
         }
 

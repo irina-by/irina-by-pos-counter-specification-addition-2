@@ -128,7 +128,7 @@ namespace PosCounter.Net.UI
             foreach (var gr in gridRows)
             {
                 var mark = EscapeTsvCell(gr.Text ?? string.Empty);
-                var name = EscapeTsvCell(MTextPlainText.FormatForPaletteDisplay(gr.NameFromSpec ?? string.Empty));
+                var name = EscapeTsvCell(MTextPlainText.FormatForPaletteDisplay(gr.Data?.NameFromSpec ?? gr.NameFromSpec ?? string.Empty));
                 var qty = gr.Count.ToString(CultureInfo.InvariantCulture);
                 var layer = EscapeTsvCell(gr.Layer ?? string.Empty);
                 lines.Add(string.Join("\t", mark, name, qty, layer));
@@ -154,7 +154,7 @@ namespace PosCounter.Net.UI
             var lines = new List<string>();
             foreach (var gr in gridRows)
             {
-                var name = MTextPlainText.FormatForPaletteDisplay(gr.NameFromSpec ?? string.Empty);
+                var name = MTextPlainText.FormatForPaletteDisplay(gr.Data?.NameFromSpec ?? gr.NameFromSpec ?? string.Empty);
                 if (!string.IsNullOrWhiteSpace(name))
                 {
                     lines.Add(name);
@@ -517,22 +517,27 @@ namespace PosCounter.Net.UI
                     continue;
                 }
 
+                if (string.Equals(row.NameSource, "user", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
                 if (visibleLayers != null && !visibleLayers.Contains(row.Layer ?? string.Empty))
                 {
-                    row.NameFromSpec = string.Empty;
-                    row.NameSource = "not_found";
+                    row.SetNameFromProgram(string.Empty, "not_found");
                     continue;
                 }
 
                 if (markNames.TryGetValue(key.Value, out var name))
                 {
-                    row.NameFromSpec = MTextPlainText.FormatForPaletteDisplay(name);
-                    row.NameSource = string.IsNullOrWhiteSpace(row.NameFromSpec) ? "not_found" : "grid-lines";
+                    var display = MTextPlainText.FormatForPaletteDisplay(name);
+                    row.SetNameFromProgram(
+                        display,
+                        string.IsNullOrWhiteSpace(display) ? "not_found" : "grid-lines");
                 }
                 else
                 {
-                    row.NameFromSpec = string.Empty;
-                    row.NameSource = "not_found";
+                    row.SetNameFromProgram(string.Empty, "not_found");
                 }
             }
         }
@@ -595,7 +600,7 @@ namespace PosCounter.Net.UI
                 return;
             }
 
-            var name = gr.NameFromSpec ?? string.Empty;
+            var name = gr.Data?.NameFromSpec ?? gr.NameFromSpec ?? string.Empty;
             var hasNewline = name.IndexOf('\n') >= 0;
             var isLong = name.Length >= PaletteLongNameThreshold || hasNewline;
             if (!isLong)
@@ -1016,11 +1021,14 @@ namespace PosCounter.Net.UI
             StatusText.Text = message ?? string.Empty;
         }
 
+        internal void SetStatusFromHost(string message) => SetStatus(message);
+
         private sealed class PosRowVm : INotifyPropertyChanged
         {
             private bool _isChecked;
             private string _nameFromSpec;
             private string _nameSource;
+            private bool _nameFromProgram;
 
             public PosRowVm(PosRow row)
             {
@@ -1052,7 +1060,29 @@ namespace PosCounter.Net.UI
                     }
 
                     _nameFromSpec = value ?? string.Empty;
+                    if (!_nameFromProgram)
+                    {
+                        _nameSource = "user";
+                        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(NameSource)));
+                    }
+
                     PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(NameFromSpec)));
+                }
+            }
+
+            internal void SetNameFromProgram(string value, string source)
+            {
+                _nameFromProgram = true;
+                try
+                {
+                    _nameFromSpec = value ?? string.Empty;
+                    _nameSource = source ?? string.Empty;
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(NameFromSpec)));
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(NameSource)));
+                }
+                finally
+                {
+                    _nameFromProgram = false;
                 }
             }
 

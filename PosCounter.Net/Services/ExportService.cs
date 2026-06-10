@@ -9,6 +9,7 @@ using System.Text;
 using System.Windows;
 using Forms = System.Windows.Forms;
 using PosCounter.Net.Models;
+using PosCounter.Net.SpecGrid;
 
 namespace PosCounter.Net.Services
 {
@@ -138,6 +139,9 @@ namespace PosCounter.Net.Services
                     Text = r.Text ?? string.Empty,
                     Layer = r.Layer ?? string.Empty,
                     Count = r.Count,
+                    Key = r.Key,
+                    NameFromSpec = r.NameFromSpec ?? string.Empty,
+                    NameSource = r.NameSource ?? string.Empty,
                     IsTotalLine = false,
                     SourceHandles = r.SourceHandles != null
                         ? new List<string>(r.SourceHandles)
@@ -315,20 +319,22 @@ namespace PosCounter.Net.Services
 
         private static void WriteRowsSheet(dynamic ws, List<PosRow> rows)
         {
-            ws.Cells[1, 1].Value2 = "Тексты выносок";
-            ws.Cells[1, 2].Value2 = "Количество";
-            ws.Cells[1, 3].Value2 = "Слой";
-            ws.Range["A1:C1"].Font.Bold = true;
+            ws.Cells[1, 1].Value2 = "Марка";
+            ws.Cells[1, 2].Value2 = "Наименование";
+            ws.Cells[1, 3].Value2 = "Количество";
+            ws.Cells[1, 4].Value2 = "Слой";
+            ws.Range["A1:D1"].Font.Bold = true;
 
             var r = 2;
             foreach (var row in rows)
             {
                 ws.Cells[r, 1].Value2 = row.Text ?? string.Empty;
-                ws.Cells[r, 2].Value2 = row.Count.ToString(CultureInfo.InvariantCulture);
-                ws.Cells[r, 3].Value2 = row.Layer ?? string.Empty;
+                ws.Cells[r, 2].Value2 = MTextPlainText.FormatForPaletteDisplay(row.NameFromSpec ?? string.Empty);
+                ws.Cells[r, 3].Value2 = row.Count.ToString(CultureInfo.InvariantCulture);
+                ws.Cells[r, 4].Value2 = row.Layer ?? string.Empty;
                 if (row.IsTotalLine)
                 {
-                    ws.Range[$"A{r}:C{r}"].Font.Bold = true;
+                    ws.Range[$"A{r}:D{r}"].Font.Bold = true;
                 }
 
                 r++;
@@ -340,10 +346,11 @@ namespace PosCounter.Net.Services
             var utf8Bom = new UTF8Encoding(true);
             using (var writer = new StreamWriter(path, false, utf8Bom))
             {
-                writer.WriteLine("Тексты выносок;Количество;Слой");
+                writer.WriteLine("Марка;Наименование;Количество;Слой");
                 foreach (var row in rows)
                 {
-                    writer.WriteLine($"{EscapeCsv(row.Text)};{row.Count.ToString(CultureInfo.InvariantCulture)};{EscapeCsv(row.Layer)}");
+                    var name = MTextPlainText.FormatForPaletteDisplay(row.NameFromSpec ?? string.Empty);
+                    writer.WriteLine($"{EscapeCsv(row.Text)};{EscapeCsv(name)};{row.Count.ToString(CultureInfo.InvariantCulture)};{EscapeCsv(row.Layer)}");
                 }
             }
         }
