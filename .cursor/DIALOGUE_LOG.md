@@ -167,3 +167,48 @@
 > Причина: `rowEndExclusive` обрезался по `KeyToRowTopSub` следующей марки (совпадал со строкой продолжения); `IsSectionHeaderRow` пропускала 2-ю строку наименования как «секцию без марки».
 > Правка: `GetNextKeyRowMarkExclusive` (KeyToRowMark); новая формула `rowEndExclusive`; `IsNameContinuationRow` + исключение в 3 collect-путях и `AllNameRowsHaveCellText`; CMD `nextMarkRow`. Docs.
 > Результат: СБОРКА net8.0-windows OK (0 errors), `dll 2026\PosCounter.Net.dll` обновлена; ручной тест key=51 — `[NAME-BOUNDARY] nextMarkRow/rowEndEx`, `[KV-PAIR]` 2 строки (NETLOAD).
+
+> [2026-06-10] Задача: план ac2016_dll_fix — DLL net46 для AC 2016 не работает (спецификация), net8 для AC 2026 OK.
+> Правка: `.csproj` ValueTuple `GeneratePathProperty` + `Reference` net461; `build-ac2016.cmd` (оба DLL в `dll 2016`); `RebindScopeKeysAndNames` skip `DetectHeader` при `ColumnsInferredFromData`; `TryGetMTextBounds` (Extents + GetBoundingPoints); `UnassignedTextCountAfterDataPass` + CMD; `WriteNetLoadBanner` в `Commands.Initialize`. Docs: INSTRUCTION_ENGINEER, BUILD, DEVELOPER; план `.cursor/plans/ac2016_dll_fix.plan.md`.
+> Результат: СБОРКА net8.0-windows OK (0 errors); net46 — только нет AcMgd на машине сборки; ручной тест AC 2016 — ожидает инженера (`build-ac2016.cmd` на ПК с AC 2016 → NETLOAD `dll 2016\`).
+
+> [2026-06-10] Задача: портативный набор сборки AC 2016 внутри PosCounter.Net (копия только папки проекта на рабочий ПК Salnikava.I).
+> Правка: `PosCounter.Net\Directory.Build.props`; `PosCounter.Net\build\` — AutoCAD.props, NuGet.local.props, build-ac2016.cmd, СБОРКА_VS_AC2016.md; `PosCounter.Net\dll 2016\README.txt`. Docs: DEVELOPER, BUILD; план `.cursor/plans/poscounter_vs_ac2016_kit.plan.md`.
+> Результат: ГОТОВО — на рабочем ПК: скопировать PosCounter.Net → `build\build-ac2016.cmd` или VS (Release, x64, net46) → NETLOAD из `dll 2016\` (оба DLL); проверка на ПК с AC 2016 — ожидает инженера.
+
+> [2026-06-10] Задача: при двойном клике build-ac2016.cmd — сообщение про телеметрию dotnet.
+> Правка: в `PosCounter.Net\build\build-ac2016.cmd` — `DOTNET_CLI_TELEMETRY_OPTOUT=1`; в `СБОРКА_VS_AC2016.md` — пояснение, что это Microsoft .NET SDK, не PosCounter.
+> Результат: ЗАРАБОТАЛО (подавление уведомления) + документация для инженера.
+
+> [2026-06-10] Задача: план fix_ac2016_spec_recognition этап 1 — диагностические логи CMD для AC 2016 (до исправления алгоритма).
+> Правка: `SpecGridLog.WriteDiag` [POSC-DIAG]; `Pass1Col*`, `InferenceColQtyScoresSummary`, `BoundsMethod`; pass1/inference/unassigned/имена/WriteQty диагностика в `TableGrid.cs`, `SpecGridService.cs`; баннер AC R* при NETLOAD в `Commands.cs`; расширен `ReportDetectedHeader` при inference/ColQty<0; docs INSTRUCTION_ENGINEER §8.1, DEVELOPER, СБОРКА_VS_AC2016.
+> Результат: КОД ГОТОВ — сборка net46 на ПК с AC 2016 (`build-ac2016.cmd`); ручной тест: NETLOAD → ЗАПУСТИТЬ → спецификация → прислать CMD с [POSC-DIAG]; этап 2 (фиксы геометрии/ColQty) — после лога.
+
+> [2026-06-10] Задача: VS net46 — ошибка CS0246 «Document» не найден при сборке для AC 2016.
+> Причина: в `TableGrid.cs` метод `ReportMarkNamesDiagnostic(Document doc, …)` без `using Autodesk.AutoCAD.ApplicationServices`.
+> Правка: добавлен `using Autodesk.AutoCAD.ApplicationServices` в `TableGrid.cs`.
+> Результат: ЗАРАБОТАЛО (ожидает пересборки в VS); если ошибка останется — проверить `build\AutoCAD.props` и путь к AcMgd.dll.
+
+> [2026-06-10] Задача: VS net46 — «Имя qtyScores не существует в текущем контексте».
+> Причина: в `TryInferColumnsFromData` вызов `FormatInferenceColQtyScores(..., qtyScores)` без объявления массива.
+> Правка: `var qtyScores = new int[cols];` и заполнение в цикле поиска ColQty.
+> Результат: ЗАРАБОТАЛО (ожидает пересборки в VS).
+
+> [2026-06-10] Задача: план ac2016_colqty_fix этап 2 — ColQty=-1 на AC 2016 при рабочих именах/марках (та же net46 DLL в AC 2026 OK).
+> Диагноз: pass1 шапка -1/-1/-1; inference Mark/Name OK; текст «Кол.» не в top-band/CellText на API 2016; col4 — числовой столбец.
+> Правка: `TryResolveMissingColQty` (simple01→allTexts→numeric); `DetectHeaderSimpleRows01`; `DetectColQtyFromAllTexts`+`TryGetHeaderRegionY`; `TryInferColQtyFromNumericColumn`; `AssignCellsHeader` ExtentsTop fallback; MText/DBText HeaderY=верх bbox; `ColQtySource`; `RebindScopeKeysAndNames`+inference вызывают fallback; CMD `источник ColQty=` в ИТОГ. Docs: DEVELOPER, INSTRUCTION_ENGINEER §8.1; план `.cursor/plans/fix_ac2016_spec_recognition_stage2.plan.md`.
+> Результат: КОД ГОТОВ — сборка net46 на ПК с AC 2016 (`build-ac2016.cmd`); ручной тест: ожидаем `ColQty=4 источник=numeric`, `WriteQty записано>0`; регрессия AC 2026 с `dll 2016\` — ожидает инженера.
+
+> [2026-06-10] Задача: совместимость с AutoCAD 2016 SP1 (M.49.0, R20.1, .NET Framework 4.5.2).
+> Причина: сборка net46 требует .NET 4.6+; на AC 2016 SP1 встроен CLR 4.5.2 — NETLOAD мог не загружать DLL.
+> Правка: `TargetFrameworks` net46→**net452**; ReferenceAssemblies net452; ValueTuple `lib\netstandard1.0`; `build-ac2016.cmd` -f net452; баннер CMD `(net452)`; docs BUILD/DEVELOPER/INSTRUCTION_ENGINEER/README/СБОРКА_VS_AC2016; план `.cursor/plans/ac2016_sp1_net452.plan.md`.
+> Результат: КОД ГОТОВ — пересборка на ПК с AC 2016 SP1; ожидает инженера: NETLOAD → `(net452)` → спецификация.
+
+> [2026-06-10] Задача: VS net452 — CS0117 «Array не содержит Empty» (PosCounterEngine, PaletteHost, PosCounterService).
+> Причина: `Array.Empty<T>()` появился в .NET 4.6; целевой framework net452 (.NET 4.5.2).
+> Правка: `ArrayCompat.cs` + замена `Array.Empty` → `ArrayCompat.Empty` в Commands, PaletteHost, PosCounterService, PosCounterEngine, SpecGridService, PosCounterControl; docs BUILD.
+> Результат: ЗАРАБОТАЛО (ожидает пересборки в VS / build-ac2016.cmd).
+
+> [2026-06-10] Задача: план ac2016_dbtext_header этап 3 — ColQty=-1 на AC 2016, шапка DBText (TEXT), top-band видит данные, col4=17 по числам.
+> Правка: `DetectHeaderByDbTextHeaderBand` (полоса GridYs, короткий DBText/MText, `ColQtySource=dbTextBand`); `CreateTextSampleFromDbText` Header=AlignmentPoint, Data=ExtentsTop; `AssignCellsHeader` цепочка Align→ExtentsTop; `TryInferColQtyFromNumericColumn` + `CountQtyValuesInColumnTexts` по AllTexts; `BuildColQtyFallbackDiagnostic`; баннер NETLOAD `build=`; `[POSC-DIAG]` в SpecGridService/ReportDetectedHeader; docs DEVELOPER/INSTRUCTION_ENGINEER; план `.cursor/plans/fix_ac2016_dbtext_header.plan.md`.
+> Результат: КОД ГОТОВ — сборка на ПК с AC 2016 (`build-ac2016.cmd`); на CI-машине без AcMgd.dll сборка net452 не запускалась; ожидает инженера: `ColQty=4 источник=numeric` или `dbTextBand`, `WriteQty записано>0`.

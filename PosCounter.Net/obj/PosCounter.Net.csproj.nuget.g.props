@@ -12,4 +12,7 @@
   <ItemGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
     <SourceRoot Include="C:\Users\user\.nuget\packages\" />
   </ItemGroup>
+  <PropertyGroup Condition=" '$(TargetFramework)' == 'net452' AND '$(ExcludeRestorePackageImports)' != 'true' ">
+    <PkgSystem_ValueTuple Condition=" '$(PkgSystem_ValueTuple)' == '' ">C:\Users\user\.nuget\packages\system.valuetuple\4.5.0</PkgSystem_ValueTuple>
+  </PropertyGroup>
 </Project>

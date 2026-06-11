@@ -73,15 +73,15 @@ namespace PosCounter.Net
         internal static bool PendingCountAllInModel { get; private set; }
 
         // Highlight request (handles) queued from UI; executed inside AutoCAD command context.
-        private static string[] _pendingHighlightHandles = Array.Empty<string>();
+        private static string[] _pendingHighlightHandles = ArrayCompat.Empty<string>();
         private static string _pendingHighlightDbFp;
 
         internal static bool TryConsumePendingHighlightHandles(Document doc, out string[] handles)
         {
-            handles = Array.Empty<string>();
+            handles = ArrayCompat.Empty<string>();
             if (doc == null)
             {
-                _pendingHighlightHandles = Array.Empty<string>();
+                _pendingHighlightHandles = ArrayCompat.Empty<string>();
                 _pendingHighlightDbFp = null;
                 return false;
             }
@@ -90,7 +90,7 @@ namespace PosCounter.Net
             if (!string.IsNullOrWhiteSpace(_pendingHighlightDbFp)
                 && !string.Equals(_pendingHighlightDbFp, fp, StringComparison.OrdinalIgnoreCase))
             {
-                _pendingHighlightHandles = Array.Empty<string>();
+                _pendingHighlightHandles = ArrayCompat.Empty<string>();
                 _pendingHighlightDbFp = null;
                 return false;
             }
@@ -101,21 +101,21 @@ namespace PosCounter.Net
             }
 
             handles = _pendingHighlightHandles;
-            _pendingHighlightHandles = Array.Empty<string>();
+            _pendingHighlightHandles = ArrayCompat.Empty<string>();
             _pendingHighlightDbFp = null;
             return true;
         }
 
         // Snapshot PickFirst at the moment user clicks RUN (before SendStringToExecute can clear it).
-        private static ObjectId[] _pendingPickFirstIds = Array.Empty<ObjectId>();
+        private static ObjectId[] _pendingPickFirstIds = ArrayCompat.Empty<ObjectId>();
         private static string _pendingPickFirstDbFp;
 
         internal static bool TryConsumePendingPickFirst(Document doc, out ObjectId[] ids)
         {
-            ids = Array.Empty<ObjectId>();
+            ids = ArrayCompat.Empty<ObjectId>();
             if (doc == null)
             {
-                _pendingPickFirstIds = Array.Empty<ObjectId>();
+                _pendingPickFirstIds = ArrayCompat.Empty<ObjectId>();
                 _pendingPickFirstDbFp = null;
                 return false;
             }
@@ -125,7 +125,7 @@ namespace PosCounter.Net
                 && !string.Equals(_pendingPickFirstDbFp, fp, StringComparison.OrdinalIgnoreCase))
             {
                 // Stale snapshot from another document; discard.
-                _pendingPickFirstIds = Array.Empty<ObjectId>();
+                _pendingPickFirstIds = ArrayCompat.Empty<ObjectId>();
                 _pendingPickFirstDbFp = null;
                 return false;
             }
@@ -136,7 +136,7 @@ namespace PosCounter.Net
             }
 
             ids = _pendingPickFirstIds;
-            _pendingPickFirstIds = Array.Empty<ObjectId>();
+            _pendingPickFirstIds = ArrayCompat.Empty<ObjectId>();
             _pendingPickFirstDbFp = null;
             return true;
         }
@@ -169,19 +169,19 @@ namespace PosCounter.Net
                         }
                         else
                         {
-                            _pendingPickFirstIds = Array.Empty<ObjectId>();
+                            _pendingPickFirstIds = ArrayCompat.Empty<ObjectId>();
                             _pendingPickFirstDbFp = null;
                         }
                     }
                     catch
                     {
-                        _pendingPickFirstIds = Array.Empty<ObjectId>();
+                        _pendingPickFirstIds = ArrayCompat.Empty<ObjectId>();
                         _pendingPickFirstDbFp = null;
                     }
                 }
                 else
                 {
-                    _pendingPickFirstIds = Array.Empty<ObjectId>();
+                    _pendingPickFirstIds = ArrayCompat.Empty<ObjectId>();
                     _pendingPickFirstDbFp = null;
                 }
 

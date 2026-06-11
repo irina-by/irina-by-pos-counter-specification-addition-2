@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Запасной путь ValueTuple, если dotnet restore ещё не задал PkgSystem_ValueTuple -->
+    <PkgSystem_ValueTuple Condition="'$(PkgSystem_ValueTuple)' == ''">$(USERPROFILE)\.nuget\packages\system.valuetuple\4.5.0</PkgSystem_ValueTuple>
+  </PropertyGroup>
+</Project>

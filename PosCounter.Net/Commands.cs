@@ -31,12 +31,89 @@ namespace PosCounter.Net
             try
             {
                 SpecGridSession.ClearScopes();
+                WriteNetLoadBanner();
                 AcApp.Idle += AutoOpenPaletteAfterNetLoad;
             }
             catch
             {
                 // ignore
             }
+        }
+
+        private static void WriteNetLoadBanner()
+        {
+            try
+            {
+                var doc = AcApp.DocumentManager.MdiActiveDocument;
+                if (doc?.Editor == null)
+                {
+                    return;
+                }
+
+                var asm = Assembly.GetExecutingAssembly();
+                var info = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                    ?? asm.GetName().Version?.ToString()
+                    ?? "?";
+                var buildStamp = TryGetAssemblyBuildStamp(asm);
+#if NET8_0
+                const string targetLabel = "net8.0-windows";
+#else
+                const string targetLabel = "net452";
+#endif
+                doc.Editor.WriteMessage(
+                    $"\n[POSC] PosCounter.Net {info} ({targetLabel}) build={buildStamp} загружен.\n");
+
+                var acDiag = TryFormatAcadReleaseForDiag(targetLabel, buildStamp);
+                if (!string.IsNullOrWhiteSpace(acDiag))
+                {
+                    SpecGridLog.ResetDiagSession(doc);
+                    SpecGridLog.WriteDiag(doc, acDiag);
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+        }
+
+        private static string TryGetAssemblyBuildStamp(Assembly asm)
+        {
+            try
+            {
+                var path = asm?.Location;
+                if (!string.IsNullOrWhiteSpace(path) && System.IO.File.Exists(path))
+                {
+                    return System.IO.File.GetLastWriteTime(path).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+
+            return "?";
+        }
+
+        private static string TryFormatAcadReleaseForDiag(string targetLabel, string buildStamp)
+        {
+            try
+            {
+                var current = HostApplicationServices.Current;
+                var prop = current?.GetType()?.GetProperty("ReleaseMajorVersion");
+                var raw = prop?.GetValue(current, null) as string;
+                if (int.TryParse(raw, out var major))
+                {
+                    return $"AutoCAD R{major} / DLL {targetLabel} build={buildStamp}";
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+
+            return string.IsNullOrWhiteSpace(targetLabel)
+                ? null
+                : $"AutoCAD ? / DLL {targetLabel} build={buildStamp}";
         }
 
         public void Terminate()
@@ -298,7 +375,7 @@ namespace PosCounter.Net
                     catch (System.Exception ex)
                     {
                         error = ex.GetType().Name + ": " + ex.Message;
-                        try { ed.SetImpliedSelection(Array.Empty<ObjectId>()); } catch { /* ignore */ }
+                        try { ed.SetImpliedSelection(ArrayCompat.Empty<ObjectId>()); } catch { /* ignore */ }
                         try { ClearTransientHighlight(); } catch { /* ignore */ }
                     }
                 }

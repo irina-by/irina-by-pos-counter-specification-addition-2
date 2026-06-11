@@ -5,18 +5,16 @@
     <!-- Prefer x64 platform in VS/MSBuild (matches AutoCAD 2016 x64 managed API). -->
     <Platforms>x64</Platforms>
     <!--
-      AutoCAD 2016-2024: .NET Framework API (net46).
+      AutoCAD 2016 SP1+ (R20.1, .NET 4.5.2) — 2024: .NET Framework API (net452).
       AutoCAD 2025+: .NET 8 API (net8.0-windows).
       We multi-target so the same codebase can be built for both.
     -->
     <!--
-      Default (for AutoCAD 2016): only net46 to avoid IDE/VS trying to resolve net8 refs.
-      net8.0-windows is enabled only when:
-      - AutoCADSdkDirNet8 is set (you have AutoCAD 2025+ SDK), OR
-      - you explicitly build with -p:TargetFramework=net8.0-windows
+      Default (for AutoCAD 2016): only net452 — совместимо с AC 2016 SP1 (.NET Framework 4.5.2).
+      net8.0-windows is enabled only when AutoCADSdkDirNet8 is set (AutoCAD 2025+ SDK).
     -->
-    <TargetFrameworks>net46</TargetFrameworks>
-    <TargetFrameworks Condition="'$(AutoCADSdkDirNet8)' != ''">net46;net8.0-windows</TargetFrameworks>
+    <TargetFrameworks>net452</TargetFrameworks>
+    <TargetFrameworks Condition="'$(AutoCADSdkDirNet8)' != ''">net452;net8.0-windows</TargetFrameworks>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>PosCounter.Net</RootNamespace>
@@ -31,7 +29,7 @@
   </PropertyGroup>
 
   <!-- Allow separate AutoCAD install paths per target framework -->
-  <PropertyGroup Condition="'$(TargetFramework)' == 'net46'">
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net452'">
     <AutoCADSdkDirEffective Condition="'$(AutoCADSdkDirNet46)' != ''">$([MSBuild]::EnsureTrailingSlash('$(AutoCADSdkDirNet46)'))</AutoCADSdkDirEffective>
     <AutoCADSdkDirEffective Condition="'$(AutoCADSdkDirEffective)' == ''">$([MSBuild]::EnsureTrailingSlash('$(AutoCADSdkDir)'))</AutoCADSdkDirEffective>
   </PropertyGroup>
@@ -40,14 +38,18 @@
     <AutoCADSdkDirEffective Condition="'$(AutoCADSdkDirEffective)' == ''">$([MSBuild]::EnsureTrailingSlash('$(AutoCADSdkDir)'))</AutoCADSdkDirEffective>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(TargetFramework)' == 'net46'">
-    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net46" Version="1.0.3" PrivateAssets="all" />
-    <!-- C# 7 tuples (Sample, Plain, Score) и Dictionary (r,c) — в .NET 4.6 нет встроенно -->
-    <PackageReference Include="System.ValueTuple" Version="4.5.0" />
+  <ItemGroup Condition="'$(TargetFramework)' == 'net452'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net452" Version="1.0.3" PrivateAssets="all" />
+    <!-- C# 7 tuples — в .NET 4.5.2 нет встроенно; netstandard1.0 совместим с AC 2016 SP1 -->
+    <PackageReference Include="System.ValueTuple" Version="4.5.0" GeneratePathProperty="true" />
+    <Reference Include="System.ValueTuple">
+      <HintPath>$(PkgSystem_ValueTuple)\lib\netstandard1.0\System.ValueTuple.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>
-    <Reference Include="Microsoft.CSharp" Condition="'$(TargetFramework)' == 'net46'" />
+    <Reference Include="Microsoft.CSharp" Condition="'$(TargetFramework)' == 'net452'" />
     <Reference Include="AcMgd">
       <HintPath>$(AutoCADSdkDirEffective)AcMgd.dll</HintPath>
       <Private>false</Private>
@@ -77,10 +79,10 @@
       <Output TaskParameter="Assemblies" ItemName="AcMgdIdentity" />
     </GetAssemblyIdentity>
 
-    <!-- net46 must not reference AutoCAD 2025+ assemblies -->
+    <!-- net452 must not reference AutoCAD 2025+ assemblies -->
     <Error
-      Condition="'$(DesignTimeBuild)' != 'true' and '$(TargetFramework)' == 'net46' and '@(AcMgdIdentity)' != '' and $([MSBuild]::VersionGreaterThanOrEquals('%(AcMgdIdentity.Version)', '25.0'))"
-      Text="Detected AcMgd.dll version %(AcMgdIdentity.Version) from $(AutoCADSdkDirEffective). This target is net46 and requires AutoCAD .NET Framework API assemblies (typically AutoCAD 2016-2024). Build the net8.0-windows target for AutoCAD 2025+." />
+      Condition="'$(DesignTimeBuild)' != 'true' and '$(TargetFramework)' == 'net452' and '@(AcMgdIdentity)' != '' and $([MSBuild]::VersionGreaterThanOrEquals('%(AcMgdIdentity.Version)', '25.0'))"
+      Text="Detected AcMgd.dll version %(AcMgdIdentity.Version) from $(AutoCADSdkDirEffective). This target is net452 and requires AutoCAD .NET Framework API assemblies (typically AutoCAD 2016-2024). Build the net8.0-windows target for AutoCAD 2025+." />
 
     <!-- net8 should reference AutoCAD 2025+ assemblies -->
     <Error

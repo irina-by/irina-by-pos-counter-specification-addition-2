@@ -8,7 +8,7 @@
 
 | Для версии AutoCAD | Что установить | Целевой framework |
 |--------------------|----------------|-------------------|
-| **2016 – 2024** | AutoCAD **x64** (например 2016) | `net46` |
+| **2016 SP1 – 2024** | AutoCAD **x64** (2016 SP1, R20.1, .NET 4.5.2+) | `net452` |
 | **2025 – 2026+** | AutoCAD 2025+ | `net8.0-windows` |
 
 Дополнительно:
@@ -41,7 +41,7 @@
 
 3. Укажите **свой** путь к папке AutoCAD (со слэшем в конце):
 
-   **Только AutoCAD 2016 (сборка net46):**
+   **Только AutoCAD 2016 (сборка net452):**
 
    ```xml
    <AutoCADSdkDirNet46>C:\Program Files\Autodesk\AutoCAD 2016\</AutoCADSdkDirNet46>
@@ -76,7 +76,7 @@
 | Компонент | Зачем |
 |-----------|--------|
 | Рабочая нагрузка **«Разработка классических приложений .NET»** | WPF + WinForms |
-| **.NET Framework 4.6 Targeting Pack** (или 4.6.1+) | Сборка `net46` для AutoCAD 2016 |
+| **.NET Framework 4.5.2 Targeting Pack** (или новее) | Сборка `net452` для AutoCAD 2016 SP1+ |
 | **.NET 8 SDK** | Сборка `net8.0-windows` для AutoCAD 2025+ |
 
 Подойдут Visual Studio 2019, 2022 или новее.
@@ -90,14 +90,14 @@
    - **Конфигурация:** `Release` (не Debug).
    - **Платформа:** `x64` (если есть в списке; иначе оставьте по умолчанию — в проекте задано `PlatformTarget=x64`).
 4. **Целевая платформа (Target Framework)** — важно:
-   - для **AutoCAD 2016–2024** выберите **`net46`**;
+   - для **AutoCAD 2016 SP1–2024** выберите **`net452`**;
    - для **AutoCAD 2025+** — **`net8.0-windows`**.
 
    Где искать переключатель:
    - на панели инструментов рядом с конфигурацией (если в props указаны оба пути Net46 и Net8), **или**
    - ПКМ по проекту → **Свойства** → вкладка **Приложение** / **Сборка** → **Целевая среда** / **Target framework**.
 
-   Если в `AutoCAD.props` **закомментирован** `AutoCADSdkDirNet8`, в списке будет только **net46** — ничего переключать не нужно.
+   Если в `AutoCAD.props` **закомментирован** `AutoCADSdkDirNet8`, в списке будет только **net452** — ничего переключать не нужно.
 
 5. Меню **Сборка** → **Собрать проект** (или **Ctrl+Shift+B**).
 
@@ -105,7 +105,7 @@
 
    | Версия AutoCAD | Папка после сборки |
    |----------------|-------------------|
-   | 2016–2024 | `PosCounter.Net\bin\Release\net46\PosCounter.Net.dll` |
+   | 2016 SP1–2024 | `PosCounter.Net\bin\Release\net452\PosCounter.Net.dll` |
    | 2025+ | `PosCounter.Net\bin\Release\net8.0-windows\PosCounter.Net.dll` |
 
 7. Скопируйте DLL в `dll 2016\` или `dll 2026\` (или укажите этот путь в **NETLOAD**).
@@ -116,14 +116,17 @@
 |--------|---------|
 | `AcMgd.dll not found` | AutoCAD 2016 не установлен **или** путь в props неверный (см. ниже) |
 | `AutoCADSdkDir is not set` | Создайте `Pos_counter addition\build\AutoCAD.props` из шаблона; перезагрузите проект в VS (закройте/откройте `.csproj`) |
-| **CS8179 / CS8137** (`ValueTuple`, `TupleElementNamesAttribute` в `CellIndex.cs`) | Для **net46** нужен NuGet **`System.ValueTuple`** — уже в `.csproj`; выполните **Восстановить пакеты** (Restore) |
+| **CS0117** `Array` не содержит `Empty` (net452) | В коде используется **`ArrayCompat.Empty<T>()`** вместо `Array.Empty` (.NET 4.6+) |
+| **CS8179 / CS8137** (`ValueTuple`, `TupleElementNamesAttribute` в `CellIndex.cs`) | Для **net452** нужен NuGet **`System.ValueTuple`** — в `.csproj` явный `Reference` на `lib\netstandard1.0`; выполните **Restore** |
+| **Could not find reference: System.ValueTuple 4.0.3.0** | `dotnet restore`; в `.csproj` — `GeneratePathProperty` + `$(PkgSystem_ValueTuple)\lib\netstandard1.0\...` |
+| NETLOAD AC 2016: ValueTuple | В папке с DLL должен лежать **`System.ValueTuple.dll`** рядом с `PosCounter.Net.dll` |
 | **MSB4011** — повторный импорт `AutoCAD.props` | Нормально игнорируется: props подключается один раз через **`Directory.Build.props`** в корне репозитория, не дублируйте `<Import>` в `.csproj` |
-| Сборка net46, а путь ведёт на AutoCAD 2026 | В props для сборки 2016 используйте **`AutoCADSdkDirNet46`**, не Net8 |
-| Нет пункта net46 | Установите targeting pack .NET Framework 4.6 в установщике VS |
+| Сборка net452, а путь ведёт на AutoCAD 2026 | В props для сборки 2016 используйте **`AutoCADSdkDirNet46`**, не Net8 |
+| Нет пункта net452 | Установите targeting pack .NET Framework 4.5.2 в установщике VS |
 
 ### Отладка (Debug) в AutoCAD
 
-1. Соберите **Debug** (та же целевая платформа `net46` или `net8.0-windows`).
+1. Соберите **Debug** (та же целевая платформа `net452` или `net8.0-windows`).
 2. **Проект** → **Свойства** → **Отладка** (Debug):
    - **Запускаемая программа:** путь к `acad.exe`, например  
      `C:\Program Files\Autodesk\AutoCAD 2016\acad.exe`
@@ -143,8 +146,8 @@ build\build-ac2016.cmd
 
 Скрипт:
 
-1. Собирает Release `net46`
-2. Кладёт копию в **`dll 2016\PosCounter.Net.dll`**
+1. `dotnet restore` + сборка Release `net452`
+2. Кладёт в **`dll 2016\`**: `PosCounter.Net.dll` и **`System.ValueTuple.dll`**
 
 ### Вариант Б — Visual Studio
 
@@ -153,16 +156,19 @@ build\build-ac2016.cmd
 ### Вариант В — командная строка (PowerShell или cmd)
 
 ```bat
-dotnet build PosCounter.Net\PosCounter.Net.csproj -c Release -f net46
+dotnet build PosCounter.Net\PosCounter.Net.csproj -c Release -f net452
 ```
 
 Готовая DLL:
 
 ```
-PosCounter.Net\bin\Release\net46\PosCounter.Net.dll
+PosCounter.Net\bin\x64\Release\net452\PosCounter.Net.dll
+PosCounter.Net\bin\x64\Release\net452\System.ValueTuple.dll
 ```
 
-Скопируйте её в `dll 2016\` или загрузите через NETLOAD напрямую из `bin\Release\net46\`.
+(Если нет `x64` в пути — смотрите `bin\Release\net452\`.)
+
+Скопируйте **оба** файла в `dll 2016\` или загрузите через NETLOAD из папки сборки.
 
 ---
 
@@ -217,7 +223,7 @@ Get-ChildItem "C:\Program Files\Autodesk" -Recurse -Filter AcMgd.dll -ErrorActio
 |-----------|---------|-------------|
 | `AutoCADSdkDir is not set` | Нет `build\AutoCAD.props` | Создать из `.template` |
 | `AcMgd.dll not found` | Неверный путь в props | Проверить папку AutoCAD |
-| `requires AutoCAD 2016-2024` при сборке net46 | В props указан путь к **2026** вместо 2016 для Net46 | `AutoCADSdkDirNet46` → папка 2016 |
+| `requires AutoCAD 2016-2024` при сборке net452 | В props указан путь к **2026** вместо 2016 для Net46 | `AutoCADSdkDirNet46` → папка 2016 |
 | `requires AutoCAD 2025+` при net8 | Путь Net8 ведёт на 2016 | `AutoCADSdkDirNet8` → папка 2025/2026 |
 | `dotnet` не найден | SDK не установлен | Установить .NET SDK |
 
@@ -227,12 +233,30 @@ Get-ChildItem "C:\Program Files\Autodesk" -Recurse -Filter AcMgd.dll -ErrorActio
 
 1. Закройте AutoCAD или убедитесь, что старая DLL не заблокирована.
 2. **NETLOAD** → выберите:
-   - `dll 2016\PosCounter.Net.dll` — для **AutoCAD 2016–2024**
+   - `dll 2016\PosCounter.Net.dll` — для **AutoCAD 2016–2024** (в папке также `System.ValueTuple.dll`)
    - `dll 2026\PosCounter.Net.dll` — для **AutoCAD 2025+**
-3. Палитра откроется **сама** (после NETLOAD).
+3. В CMD: `[POSC] PosCounter.Net … (net452)` или `(net8.0-windows)`; палитра откроется **сама**.
 4. При необходимости снова: команда **POSC**.
 
-**Важно:** DLL для 2016 (`net46`) **нельзя** загружать в AutoCAD 2026 (.NET 8) и наоборот.
+**Важно:** DLL для 2016 (`net452`) **нельзя** загружать в AutoCAD 2026 (.NET 8) и наоборот.
+
+---
+
+## Портативная сборка (только папка PosCounter.Net)
+
+Если копируете **только** `PosCounter.Net` на рабочий стол (без корня репозитория), внутри проекта уже есть автономный набор:
+
+| Папка / файл | Назначение |
+|--------------|------------|
+| `PosCounter.Net\Directory.Build.props` | Подключает локальные props при открытии `.csproj` |
+| `PosCounter.Net\build\AutoCAD.props` | Путь к AutoCAD 2016 |
+| `PosCounter.Net\build\NuGet.local.props` | Запасной путь ValueTuple (`$(USERPROFILE)\.nuget\...`) |
+| `PosCounter.Net\build\build-ac2016.cmd` | Сборка net452 → `PosCounter.Net\dll 2016\` |
+| `PosCounter.Net\build\СБОРКА_VS_AC2016.md` | Пошаговая инструкция для Visual Studio |
+
+1. Скопируйте папку `PosCounter.Net` на рабочий стол (можно без `bin\`, `obj\`).
+2. Откройте `PosCounter.Net.csproj` в VS или запустите `build\build-ac2016.cmd`.
+3. Готовые DLL — в `PosCounter.Net\dll 2016\` (оба файла для NETLOAD).
 
 ---
 
@@ -242,11 +266,13 @@ Get-ChildItem "C:\Program Files\Autodesk" -Recurse -Filter AcMgd.dll -ErrorActio
 |--------------|------------|
 | `build\AutoCAD.props.template` | Образец настроек |
 | `build\AutoCAD.props` | Ваши пути (создаёте сами) |
-| `build\build-ac2016.cmd` | Сборка + копия в `dll 2016` |
+| `build\build-ac2016.cmd` | Сборка + копия в `dll 2016` (из корня репо) |
 | `build\build-ac2026.cmd` | Сборка net8 |
-| `dll 2016\` | Готовая DLL для AC 2016–2024 |
+| `PosCounter.Net\build\` | Портативный набор для сборки только папки проекта |
+| `dll 2016\` | Готовая DLL для AC 2016–2024 (корень репо) |
+| `PosCounter.Net\dll 2016\` | Готовая DLL при портативной сборке |
 | `dll 2026\` | Готовая DLL для AC 2025+ |
-| `PosCounter.Net\bin\Release\net46\` | Выход MSBuild (2016) |
+| `PosCounter.Net\bin\Release\net452\` | Выход MSBuild (2016 SP1+) |
 | `PosCounter.Net\bin\Release\net8.0-windows\` | Выход MSBuild (2026) |
 
 ---

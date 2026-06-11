@@ -1,8 +1,8 @@
 # PosCounter.Net — техническая документация (факт по коду)
 
 **Версия:** 4.2.0-table-grid-lines  
-**Сборки:** `dll 2016` (net46), `dll 2026` (net8.0-windows)  
-**Дата актуализации:** 2026-06-09 (многострочное наименование, grid scan шапки, ResolveNameForKey, fix row1, native Table)
+**Сборки:** `dll 2016` (net452, .NET 4.5.2+ / AC 2016 SP1–2024), `dll 2026` (net8.0-windows)  
+**Дата актуализации:** 2026-06-10 (этап 3: DBText шапка AC 2016, numeric ColQty по AllTexts)
 
 ---
 
@@ -409,12 +409,68 @@ CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `markBlockEnd`, `rowEndEx`
 
 ## 16. Сборка
 
-| AutoCAD | Framework | Скрипт |
-|---------|-----------|--------|
-| 2016–2024 | net46 | `build\build-ac2016.cmd` |
-| 2025+ | net8.0-windows | `build\build-ac2026.cmd` |
+| AutoCAD | Framework | Скрипт | Деплой |
+|---------|-----------|--------|--------|
+| 2016 SP1–2024 | net452 (.NET 4.5.2+) | `build\build-ac2016.cmd` (корень репо) или `PosCounter.Net\build\build-ac2016.cmd` (портативно) | `dll 2016\` — **PosCounter.Net.dll** + **System.ValueTuple.dll** |
+| 2025+ | net8.0-windows | `build\build-ac2026.cmd` | `dll 2026\PosCounter.Net.dll` |
 
-Пути: `build\AutoCAD.props` (из template). Подробно: `docs/BUILD.md`.
+Пути: `build\AutoCAD.props` (из template) или `PosCounter.Net\build\AutoCAD.props`. Подробно: `docs/BUILD.md`.
+
+### Портативная сборка AC 2016 (2026-06-10)
+
+План: `.cursor/plans/poscounter_vs_ac2016_kit.plan.md`.
+
+Для копирования **только** папки `PosCounter.Net` на рабочий ПК (без корня репозитория):
+
+| Файл | Назначение |
+|------|------------|
+| `PosCounter.Net\Directory.Build.props` | Импорт `build\AutoCAD.props` и `build\NuGet.local.props` |
+| `PosCounter.Net\build\AutoCAD.props` | Путь к AC 2016 (`AutoCADSdkDirNet46`) |
+| `PosCounter.Net\build\NuGet.local.props` | Запасной `PkgSystem_ValueTuple` через `$(USERPROFILE)\.nuget\...` |
+| `PosCounter.Net\build\build-ac2016.cmd` | Сборка net452 → копия в `PosCounter.Net\dll 2016\` |
+| `PosCounter.Net\build\СБОРКА_VS_AC2016.md` | Инструкция для Visual Studio |
+
+Инструкция для инженера: `PosCounter.Net\build\СБОРКА_VS_AC2016.md`.
+
+### Диагностика AC 2016 — `[POSC-DIAG]` (2026-06-10)
+
+План этапа 1: `.cursor/plans/fix_ac2016_spec_recognition.plan.md`.  
+План этапа 2 (ColQty fallback): `.cursor/plans/fix_ac2016_spec_recognition_stage2.plan.md`.  
+План этапа 3 (DBText шапка + numeric AllTexts): `.cursor/plans/fix_ac2016_dbtext_header.plan.md`.
+
+| Компонент | Назначение |
+|-----------|------------|
+| `SpecGridLog.WriteDiag` | CMD `[POSC-DIAG]`, лимит ~55 строк на «Выбрать спецификацию» |
+| `ScopeGridResult.Pass1Col*` | Снимок столбцов после pass1 `DetectHeader` |
+| `InferenceColQtyScoresSummary` | Scores ColQty при `TryInferColumnsFromData` |
+| `ScopeGridResult.ColQtySource` | Источник ColQty: `grid`, `dbTextBand`, `topBand`, `inference`, `simple01`, `allTexts`, `numeric` |
+| `TryResolveMissingColQty` | Цепочка fallback при `ColQty<0`: simple01 → allTexts → numeric; при провале — `ColQtyFallbackDiag` |
+| `DetectHeaderByDbTextHeaderBand` | Шапка DBText/MText в полосе `TryGetHeaderBandY` (GridYs), до top-band |
+| `IsTextYPlausibleForHeaderBand` | Отсев Y вне таблицы (|Y-median| &lt; 8×rowStep) |
+| `DetectHeaderSimpleRows01` | OLD-стиль: шапка из строк 0–1 `CellText` |
+| `DetectColQtyFromAllTexts` | Поиск «Кол.» в `AllTexts` (зона `TryGetHeaderBandY` + region) |
+| `TryInferColQtyFromNumericColumn` | Столбец по числам: `CellText` **и** `AllTexts` (`CountQtyValuesInColumnTexts`) |
+| `BuildColQtyFallbackDiagnostic` | per-col `cell=` / `text=` при провале fallback |
+| `ScopeGridResult.DbTextHeaderBandSummary` | `[POSC-DIAG]` найденные подписи в полосе GridYs |
+| `AssignCellsHeader` | Цепочка: `HeaderY` (AlignmentPoint) → `AlignY` → `DataY` (ExtentsTop) |
+| `CreateTextSampleFromDbText` | Header=AlignmentPoint, Data=ExtentsTop; `BoundsMethod=AlignmentPoint+ExtentsTop` |
+| `TextSample.AlignX/Y` | Точка вставки DBText для fallback pass1 |
+| `Commands.TryGetAssemblyBuildStamp` | NETLOAD: `build=yyyy-MM-dd HH:mm` |
+| `BuildHeaderTopBandDiagnosticHeaderCoords` | Top-band по HeaderX/Y (при inference) |
+| `ReportScopeSummaryDiagnostic` | ИТОГ по таблице + `источник ColQty=` + имена в палитру |
+
+### AC 2016 vs 2026 (2026-06-10)
+
+План: `.cursor/plans/ac2016_dll_fix.plan.md`.
+
+| Проблема | Решение |
+|----------|---------|
+| ValueTuple при сборке/NETLOAD net452 | `.csproj`: `GeneratePathProperty` + `Reference` `lib\netstandard1.0\System.ValueTuple.dll`, `Private=True` |
+| AC 2016 SP1 (.NET 4.5.2) | Целевой framework **net452** (не net46 — иначе NETLOAD может требовать .NET 4.6) |
+| `(столбцы по данным): Марка — не найдена` | `RebindScopeKeysAndNames`: не вызывать `DetectHeader` если `ColumnsInferredFromData` |
+| Пустой `CellText` на AC 2016 | `TryGetMTextBounds`: fallback `GetBoundingPoints()`; CMD `Текстов вне ячеек сетки` |
+| Версия DLL | `Commands.Initialize` → `[POSC] … (net452) build=…` — дата файла DLL |
+| Старый LISP | Не использовать `pos_counter_2016_2026.lsp`; только NETLOAD |
 
 ---
 

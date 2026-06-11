@@ -27,7 +27,7 @@ namespace PosCounter.Net.Engine
 
         public sealed class PosCountResult
         {
-            public IReadOnlyList<PosRow> Rows { get; set; } = Array.Empty<PosRow>();
+            public IReadOnlyList<PosRow> Rows { get; set; } = ArrayCompat.Empty<PosRow>();
             public bool UsedViewportSelection { get; set; }
             public bool IncludedPaperSpace { get; set; }
             public string SourceDescription { get; set; }
@@ -40,7 +40,7 @@ namespace PosCounter.Net.Engine
             public PosCountResult CloneDetached()
             {
                 var list = new List<PosRow>();
-                foreach (var r in Rows ?? Array.Empty<PosRow>())
+                foreach (var r in Rows ?? ArrayCompat.Empty<PosRow>())
                 {
                     if (r == null)
                     {
@@ -83,7 +83,7 @@ namespace PosCounter.Net.Engine
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null)
             {
-                return new PosCountResult { Rows = Array.Empty<PosRow>() };
+                return new PosCountResult { Rows = ArrayCompat.Empty<PosRow>() };
             }
 
             var result = new PosCountResult();
@@ -113,7 +113,7 @@ namespace PosCounter.Net.Engine
                 }
                 catch
                 {
-                    impliedSelection = Array.Empty<ObjectId>();
+                    impliedSelection = ArrayCompat.Empty<ObjectId>();
                 }
 
                 // Palette-driven UX (required):
@@ -132,7 +132,7 @@ namespace PosCounter.Net.Engine
                     if (IsInLayoutViewport())
                     {
                         var vp = TrySelectInViewportPolygon(doc.Editor);
-                        sourceIds = vp.Item1 ?? Array.Empty<ObjectId>();
+                        sourceIds = vp.Item1 ?? ArrayCompat.Empty<ObjectId>();
                         result.UsedViewportSelection = vp.Item2;
                         result.IncludedPaperSpace = false;
                         result.SourceDescription = "активный viewport";
@@ -147,7 +147,7 @@ namespace PosCounter.Net.Engine
                 }
                 else
                 {
-                    sourceIds = impliedSelection ?? Array.Empty<ObjectId>();
+                    sourceIds = impliedSelection ?? ArrayCompat.Empty<ObjectId>();
                     if (sourceIds.Length > 0)
                     {
                         result.SourceDescription = "выделение";
@@ -157,14 +157,14 @@ namespace PosCounter.Net.Engine
                     {
                         result.SourceDescription = "нет выделения";
                         result.SourceObjectCount = 0;
-                        result.Rows = Array.Empty<PosRow>();
+                        result.Rows = ArrayCompat.Empty<PosRow>();
                         return result;
                     }
                 }
 
                 if (sourceIds.Length == 0)
                 {
-                    result.Rows = Array.Empty<PosRow>();
+                    result.Rows = ArrayCompat.Empty<PosRow>();
                     return result;
                 }
 
@@ -317,7 +317,7 @@ namespace PosCounter.Net.Engine
                 // ignored
             }
 
-            return Array.Empty<ObjectId>();
+            return ArrayCompat.Empty<ObjectId>();
         }
 
         private static bool IsUsableId(ObjectId id)
@@ -394,7 +394,7 @@ namespace PosCounter.Net.Engine
                 var polygon = BuildActiveViewportPolygon(editor);
                 if (polygon == null || polygon.Count < 3)
                 {
-                    return Tuple.Create(Array.Empty<ObjectId>(), false);
+                    return Tuple.Create(ArrayCompat.Empty<ObjectId>(), false);
                 }
 
                 var filter = new SelectionFilter(new[]
@@ -415,11 +415,11 @@ namespace PosCounter.Net.Engine
                     return Tuple.Create(window.Value.GetObjectIds(), true);
                 }
 
-                return Tuple.Create(Array.Empty<ObjectId>(), false);
+                return Tuple.Create(ArrayCompat.Empty<ObjectId>(), false);
             }
             catch
             {
-                return Tuple.Create(Array.Empty<ObjectId>(), false);
+                return Tuple.Create(ArrayCompat.Empty<ObjectId>(), false);
             }
         }
 

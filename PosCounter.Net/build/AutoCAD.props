@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- AC 2016 SP1 (R20.1, M.49.0, .NET 4.5.2) — укажите папку с AcMgd.dll -->
+    <AutoCADSdkDirNet46>C:\Program Files\Autodesk\AutoCAD 2016\</AutoCADSdkDirNet46>
+  </PropertyGroup>
+</Project>

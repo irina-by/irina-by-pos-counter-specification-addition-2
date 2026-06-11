@@ -298,7 +298,7 @@ namespace PosCounter.Net.UI
                 _isInternalUpdate = true;
                 try
                 {
-                    var rows = res?.Rows ?? Array.Empty<PosRow>();
+                    var rows = res?.Rows ?? ArrayCompat.Empty<PosRow>();
                     _lastCountRows = rows.Select(r => new PosRow
                     {
                         Text = r.Text,

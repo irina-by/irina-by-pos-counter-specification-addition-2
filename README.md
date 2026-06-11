@@ -25,7 +25,7 @@
 
 | AutoCAD          | Сборка           | Готовая папка                     |
 | ---------------- | ---------------- | --------------------------------- |
-| **2016 – 2024**  | `net46`          | **`dll 2016\PosCounter.Net.dll`** |
+| **2016 SP1 – 2024** | `net452` (.NET 4.5.2+) | **`dll 2016\PosCounter.Net.dll`** |
 | **2025 – 2026+** | `net8.0-windows` | **`dll 2026\PosCounter.Net.dll`** |
 
 Как собрать DLL: **[docs/BUILD.md](docs/BUILD.md)**

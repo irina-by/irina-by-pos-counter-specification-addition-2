@@ -1,0 +1,17 @@
+<Project>
+  <!-- Портативная сборка: props в build\ рядом с .csproj (копия PosCounter.Net на рабочий стол). -->
+  <Import Project="$(MSBuildThisFileDirectory)build\AutoCAD.props" Condition="Exists('$(MSBuildThisFileDirectory)build\AutoCAD.props')" />
+  <Import Project="$(MSBuildThisFileDirectory)build\NuGet.local.props" Condition="Exists('$(MSBuildThisFileDirectory)build\NuGet.local.props')" />
+
+  <PropertyGroup Condition="'$(AutoCADSdkDir)' != ''">
+    <AutoCADSdkDir>$([MSBuild]::EnsureTrailingSlash('$(AutoCADSdkDir)'))</AutoCADSdkDir>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(AutoCADSdkDirNet46)' != ''">
+    <AutoCADSdkDirNet46>$([MSBuild]::EnsureTrailingSlash('$(AutoCADSdkDirNet46)'))</AutoCADSdkDirNet46>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(AutoCADSdkDirNet8)' != ''">
+    <AutoCADSdkDirNet8>$([MSBuild]::EnsureTrailingSlash('$(AutoCADSdkDirNet8)'))</AutoCADSdkDirNet8>
+  </PropertyGroup>
+</Project>
