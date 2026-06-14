@@ -15,6 +15,7 @@ using PosCounter.Net.UI;
 
 namespace PosCounter.Net
 {
+    // POSC-SINGLE-FILE: PaletteHost — в проекте должен быть только этот файл (не PaletteHost (1).cs).
     public static class PaletteHost
     {
         // NOTE: PaletteSet.Size is the outer window size (includes non-client area).
@@ -201,6 +202,7 @@ namespace PosCounter.Net
             public bool Success;
             public string Error;
             public Dictionary<int, string> MarkNames = new Dictionary<int, string>();
+            public int PaletteKeyCount;
             public int QtyWritten;
             public int QtySkipped;
             public List<int> MissingQtyMarks = new List<int>();

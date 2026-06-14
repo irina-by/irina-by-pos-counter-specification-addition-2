@@ -1,6 +1,7 @@
 <Project>
   <PropertyGroup>
     <!-- Запасной путь ValueTuple, если dotnet restore ещё не задал PkgSystem_ValueTuple -->
-    <PkgSystem_ValueTuple Condition="'$(PkgSystem_ValueTuple)' == ''">$(USERPROFILE)\.nuget\packages\system.valuetuple\4.5.0</PkgSystem_ValueTuple>
+    <PkgSystem_ValueTuple Condition="'$(PkgSystem_ValueTuple)' == '' and Exists('$(USERPROFILE)\.nuget\packages\system.valuetuple\4.5.0')">$(USERPROFILE)\.nuget\packages\system.valuetuple\4.5.0</PkgSystem_ValueTuple>
+    <ValueTupleDllPath Condition="'$(ValueTupleDllPath)' == '' and Exists('$(MSBuildThisFileDirectory)..\lib\netstandard1.0\System.ValueTuple.dll')">$(MSBuildThisFileDirectory)..\lib\netstandard1.0\System.ValueTuple.dll</ValueTupleDllPath>
   </PropertyGroup>
 </Project>

@@ -18,10 +18,14 @@ namespace PosCounter.Net.SpecGrid
 
         public static string SharedGridLayer;
 
+        /// <summary>Эталон ColMark/ColName/ColQty с первой таблицы (реальная шапка).</summary>
+        public static SpecColumnSchema ColumnSchema;
+
         public static void ClearScopes()
         {
             ScopesInternal.Clear();
             SharedGridLayer = null;
+            ColumnSchema = null;
         }
 
         public static void SetScopes(IEnumerable<ScopeGridResult> scopes)

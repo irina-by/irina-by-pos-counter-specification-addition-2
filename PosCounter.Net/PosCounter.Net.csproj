@@ -38,12 +38,18 @@
     <AutoCADSdkDirEffective Condition="'$(AutoCADSdkDirEffective)' == ''">$([MSBuild]::EnsureTrailingSlash('$(AutoCADSdkDir)'))</AutoCADSdkDirEffective>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net452'">
+  <!-- NuGet restore может не сработать (длинный путь OneDrive) — тогда lib\netstandard1.0 в репозитории -->
+    <ValueTupleDllPath Condition="'$(ValueTupleDllPath)' == '' and '$(PkgSystem_ValueTuple)' != '' and Exists('$(PkgSystem_ValueTuple)\lib\netstandard1.0\System.ValueTuple.dll')">$(PkgSystem_ValueTuple)\lib\netstandard1.0\System.ValueTuple.dll</ValueTupleDllPath>
+    <ValueTupleDllPath Condition="'$(ValueTupleDllPath)' == '' and Exists('$(MSBuildThisFileDirectory)lib\netstandard1.0\System.ValueTuple.dll')">$(MSBuildThisFileDirectory)lib\netstandard1.0\System.ValueTuple.dll</ValueTupleDllPath>
+  </PropertyGroup>
+
   <ItemGroup Condition="'$(TargetFramework)' == 'net452'">
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net452" Version="1.0.3" PrivateAssets="all" />
     <!-- C# 7 tuples — в .NET 4.5.2 нет встроенно; netstandard1.0 совместим с AC 2016 SP1 -->
     <PackageReference Include="System.ValueTuple" Version="4.5.0" GeneratePathProperty="true" />
-    <Reference Include="System.ValueTuple">
-      <HintPath>$(PkgSystem_ValueTuple)\lib\netstandard1.0\System.ValueTuple.dll</HintPath>
+    <Reference Include="System.ValueTuple" Condition="'$(ValueTupleDllPath)' != ''">
+      <HintPath>$(ValueTupleDllPath)</HintPath>
       <Private>True</Private>
     </Reference>
   </ItemGroup>
@@ -67,6 +73,12 @@
       <Private>false</Private>
     </Reference>
   </ItemGroup>
+
+  <Target Name="ValidateValueTupleReference" BeforeTargets="ResolveReferences">
+    <Error
+      Condition="'$(DesignTimeBuild)' != 'true' and '$(TargetFramework)' == 'net452' and '$(ValueTupleDllPath)' == ''"
+      Text="System.ValueTuple.dll не найден. Нужен файл PosCounter.Net\lib\netstandard1.0\System.ValueTuple.dll (перекопируйте PosCounter.Net с Yandex) или выполните dotnet restore." />
+  </Target>
 
   <Target Name="ValidateAutoCadReferences" BeforeTargets="ResolveReferences">
     <!-- In Visual Studio design-time builds we don't hard-fail on missing/mismatched SDK paths. -->

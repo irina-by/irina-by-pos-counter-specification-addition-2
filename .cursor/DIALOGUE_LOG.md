@@ -212,3 +212,69 @@
 > [2026-06-10] Задача: план ac2016_dbtext_header этап 3 — ColQty=-1 на AC 2016, шапка DBText (TEXT), top-band видит данные, col4=17 по числам.
 > Правка: `DetectHeaderByDbTextHeaderBand` (полоса GridYs, короткий DBText/MText, `ColQtySource=dbTextBand`); `CreateTextSampleFromDbText` Header=AlignmentPoint, Data=ExtentsTop; `AssignCellsHeader` цепочка Align→ExtentsTop; `TryInferColQtyFromNumericColumn` + `CountQtyValuesInColumnTexts` по AllTexts; `BuildColQtyFallbackDiagnostic`; баннер NETLOAD `build=`; `[POSC-DIAG]` в SpecGridService/ReportDetectedHeader; docs DEVELOPER/INSTRUCTION_ENGINEER; план `.cursor/plans/fix_ac2016_dbtext_header.plan.md`.
 > Результат: КОД ГОТОВ — сборка на ПК с AC 2016 (`build-ac2016.cmd`); на CI-машине без AcMgd.dll сборка net452 не запускалась; ожидает инженера: `ColQty=4 источник=numeric` или `dbTextBand`, `WriteQty записано>0`.
+
+> [2026-06-10] Задача: регрессия имён/qty после этапа 3 — табл.2 марки 60–69 пустые, ColQty=4 (масса), склейка Обозначение+Наименование, qty не в первой суб-ячейке.
+> Диагноз: pass2 `DataY=ExtentsTop` сдвигал Row марок; numeric выбрал col4; neighbor fallback тянул col1.
+> Правка: `DataY=AlignmentPoint` pass2; `AssignCellsData` Align→Data; `ColDesignation`+`IsTextInNameColumn`; убран `ResolveNameFromNeighborColumns` в col1; `ApplyStandardColumnLayout`/`TryPreferQtyColumnAfterName` ColQty=ColName+1; `ColumnLooksLikeMassData`; `IsSectionHeaderRow` «Продолжение»; `KeyToRowMarkSampleDiag`+`WriteQtyDiagLines`; план `.cursor/plans/fix_name_qty_regression.plan.md`.
+> Результат: КОД ГОТОВ — пересборка `build-ac2016.cmd`; ожидает инженера: KeyToRowMark 60–69, ColQty=3, имена только col2, WriteQty rowTop+палитра.
+
+> [2026-06-10] Задача: план fix_colqty_gt20_names — табл.1 ColQty=4→3; ГТ-20 имя только col2 (RU+EN), без ГОСТ/TB100 из col1.
+> Правка: `ApplyMandatoryColQtyLayout` (схема 0/1/2/3); `LooksLikeDesignationText`; `BuildCellMatrix` col2-only; `ResolveNameForKey` без cell-only при ColDesignation; `TryGetMTextBounds` Data=Location; `ApplyStandardColumnLayout` перед WriteQty; `ColQtyLayoutFixDiag`/`NameCol2DiagLines`; docs DEVELOPER.
+> Результат: КОД ГОТОВ — сборка net452 на ПК с AC 2016 (`build-ac2016.cmd`); на CI-машине без AcMgd.dll не собиралось; ожидает инженера: табл.1 `ColQty=3 layout`, ГТ-20 марка 1 RU+EN без ГОСТ, табл.2 без регрессии.
+
+> [2026-06-10] Задача: план fix_gt-20_bleed_colqty — bleed имён 4–6, ColQty=4, qty не в col3/не из палитры визуально.
+> Правка: запланировано — useCellTextOnly как OLD; nextKeyTop cap; numeric prefer col3; ResolveQtyInsertY верхняя суб-ячейка; ИТОГ layout+ВНИМАНИЕ.
+> Результат: ОЖИДАЕТ РЕАЛИЗАЦИИ — пользователь «готов», но plan mode заблокировал правки .cs; нужен agent mode.
+
+> [2026-06-10] Задача: план fix_gt-20_bleed_colqty — реализация (лог ColQty=-1, WriteQty=0, bleed имён, qty не из палитры).
+> Правка: `useCellTextOnly` без gate ColDesignation; `GetNextKeyRowExclusive` cap; `TryInferColQtyFromNumericColumn` prefer col3; `ResolveQtyInsertY` rowTop+1; `DbTextHeaderMaxPlainLen=60`; `LooksLikeDesignationText` в dbText band; `AppendHeaderTextPart` по строкам; `ReportScopeSummaryDiagnostic` layout+ВНИМАНИЕ; WriteQty diag Y; docs DEVELOPER/INSTRUCTION_ENGINEER.
+> Результат: КОД ГОТОВ — сборка на ПК с AC 2016 (`build-ac2016.cmd` или VS net452); синхронизировать Yandex→Salnikava.I OneDrive; NETLOAD `bin\x64\Release\net452`; ожидает инженера: `ColQty=3 источник=layout`, `WriteQty key=1 qty=1`, имена ГТ-20 марки 1/4/5/6 без bleed.
+
+> [2026-06-11] Задача: сборка на рабочем ПК Salnikava.I — ошибка дубликата PaletteHost.
+> Правка: на Yandex один PaletteHost.cs; в СБОРКА_VS_AC2016.md добавлен раздел: поиск двух PaletteHost*.cs, чистая перекопировка папки, очистка bin/obj.
+> Результат: инструкция для инженера — не баг Yandex-папки, а наложение копий при переносе.
+
+> [2026-06-11] Задача: сборка — System.ValueTuple 4.5.0 не найден (NuGet/длинный путь OneDrive).
+> Правка: `lib\netstandard1.0\System.ValueTuple.dll` в репозитории; `PosCounter.Net.csproj` fallback `ValueTupleDllPath`; `NuGet.local.props`; СБОРКА_VS_AC2016.md.
+> Результат: сборка net452 без NuGet restore если есть lib\; при NETLOAD копировать ValueTuple.dll рядом с плагином.
+
+> [2026-06-11] Задача: повтор ошибки PaletteHost при сборке.
+> Правка: скрипт `build\verify-no-duplicate-sources.ps1`; маркер `POSC-SINGLE-FILE` в PaletteHost.cs; уточнена СБОРКА_VS_AC2016.md (VS Обозреватель — один файл).
+> Результат: на рабочем ПК запустить скрипт; при [OK] — Clean + Rebuild; иначе чистая перекопировка PosCounter.Net с Yandex.
+
+> [2026-06-10] Задача: план diag_logs_colqty_names — расширить CMD-диагностику + фикс continuation header.
+> Правка: `SpecGridLog.WriteTrace`/`WriteDiagTail`/budget=120/`FormatDllBuildStamp`; `[COLQTY]` в ApplyStandardColumnLayout/TryPrefer/TryResolve/infer; `[HEADER]` ReportHeaderTraceDiagnostic; `[NAME]` key 1–7; `[WRITEQTY]` TraceWriteQty; `BuildHeaderOnlyColumnText` отсев NameScore при inference; чеклист копирования в СБОРКА_VS_AC2016.md; docs.
+> Результат: КОД ГОТОВ — копировать PosCounter.Net на рабочий ПК Salnikava.I, Release x64 net452, NETLOAD свежей DLL; в CMD искать `[COLQTY] layout fix →3`, `[NAME] key=1 cellOnly=…`, `[WRITEQTY] targetY=…`; прислать лог для этапа 2.
+
+> [2026-06-11] Задача: план fix_gt20_names_qty (лог build=18:48) — bleed имён ГТ-20, qty не в первую суб-ячейку, шум numeric col=0, пустые имена 52–57/105–109.
+> Правка: `RebindScopeKeysAndNames` gate ColMark/ColName; numeric skip mark column; `FindQtyTextInCell` rowTop+1; `UpsertQtyText` skip-far-entY+create; `ResolveNameForKey` useCellTextFromBlock без supplement при cellJoined≥20; supplement cap nextKeyTop; `DescribeHeaderColumn` «— (продолжение)»; `[NAME]` key 52–57/105–109; docs + fix_gt20_names_qty_IMPLEMENTED.md.
+> Результат: КОД ГОТОВ — ожидает инженера: ГТ-20 марка 1 RU+EN, марки 4–6 без bleed, `[WRITEQTY] key=1 qty=1`, нет `numeric col=0` до inference; прислать CMD с `[NAME]` и `[WRITEQTY]`.
+
+> [2026-06-12] Задача: план header_anchor_schema — якорь шапки, наследование ColMark/ColName/ColQty для продолжений.
+> Правка: `SpecColumnSchema`; `SpecGridSession.ColumnSchema`; `TryLockColumnSchema` (pass1); `TryApplyInheritedColumnSchema`; `ColumnsInheritedFromSchema`; `ProcessInferColumnsFallback`; CMD `[SCHEMA]` + «столбцы от эталона»; docs INSTRUCTION_ENGINEER/DEVELOPER.
+> Результат: КОД ГОТОВ — таблица 1 со шапкой → `[SCHEMA] locked`; продолжения → `inherited` без inference; ожидает инженера: пересборка NETLOAD, проверка 398+214.
+
+> [2026-06-12] Задача: план fix_schema_inherit_table2 — табл.2 пустая (59 obj, X-mismatch 112k vs 134k).
+> Правка: `TryAlignScopeColumnsToAnchorSchema` (центры X-полос + offset); `TryApplyInheritedColumnSchema` → `inherited`/`aligned` + `failReason`; `SpecGridService` `[SCHEMA] inherit-fail reason=` + «рамка слишком мала» + fallback `TryInferColumnsFromData`; docs INSTRUCTION_ENGINEER/DEVELOPER; план `fix_schema_inherit_table2_IMPLEMENTED.md`.
+> Результат: КОД ГОТОВ — ожидает инженера: пересборка net452, NETLOAD; табл.1 552 obj → locked; табл.2 полная ~214 → inherited/aligned + WriteQty; табл.2 59 obj → предупреждение + fallback infer.
+
+> [2026-06-12] Задача: план fix_bilingual_names_gt20_header — имена bleed RU/EN (марки 4–6), шапка ГТ-20 pass1=-1 «Марка col0 «9»», табл.2 26 obj без inherit (лог build=14:48).
+> Правка: `CapRowEndBeforeNextMarkNameLead`, ослаблен `cellOnly` + cyrillic supplement; `EnumerateDisplayNameLines` в CollectNamePartsFromCellText; `DetectHeaderByTopGridRows`, `TryGetHeaderTopTextBandY` по GridYs, `SanitizeMarkScoresForDigitOnlyHeaders`, `CanLockColumnSchemaFromPass2`; `IsContinuationPickTooSmall` (<80 obj) без infer fallback; docs DEVELOPER/INSTRUCTION_ENGINEER; планы `fix_bilingual_names_gt20_header.plan.md` + `_IMPLEMENTED.md`.
+> Результат: КОД ГОТОВ — сборка на ПК с AC 2016 (`build-ac2016.cmd`); ожидает инженера: малая таблица 98 obj (имена 1–7, `[NAME] nameLeadCap`); большая 472+полное продолжение (`[SCHEMA] locked`/`inherited`); убрать `(load "pos_counter_2016_2026")` из acad.lsp.
+
+> [2026-06-13] Задача: план diag_log_gt20 (лог build=11:41) — 9 марок missing qty (не баг WriteQty), 13 пустых имён, MText вне сетки табл.2.
+> Правка: `AssignUnassignedTextsToNameColumn` + `UnassignedNameFixLines`; вызов после `AssignCellsData` и в `RebindScopeKeysAndNames` с пересборкой `CellText`; `ResolveContinuationNameRowEnd` / `NextMarkHasStandaloneNameLead`; `ShouldLogNameRejectReason` + `[NAME] skip=…` в `AddNamePartsFromTextSample`; `ReportUnassignedTextsDiagnostic` — строки `unassigned→name`; docs DEVELOPER §20; план `diag_log_gt20_IMPLEMENTED.md`.
+> Результат: КОД ГОТОВ — пересборка net452, NETLOAD; ожидает инженера: `[POSC-DIAG] unassigned→name col=2`, `[NAME] skip=designation` для key=52, имена ≥52, WriteQty=49 без регрессии.
+
+> [2026-06-13] Задача: план авто_kv_ac2016 — универсальный KV без хардкода марок/0-2-3.
+> Правка: `MarkKeyParser` (префиксы Поз./Марка); `DetectHeaderBoundaryAndColumns` (scan 0..5, gridTokens); `ResolveNameForKey` + `AllNameRowsHaveCellText` + `PickBestNameTextForRow`; bleed `continue` + `IsUpstreamBleedFromForeignMark`; MText `DataY=ExtentsTop`; ColQty evidence-only (убран mandatory 0/2/3); `SpecDiagPolicy` + `[HEADER-SCAN][MARK][GEO][NAME][KV-SUMMARY]`; docs §21–22.
+> Результат: КОД ГОТОВ — сборка на ПК с AC 2016; ожидает инженера: `headerPath=gridTokens`, `[KV-SUMMARY]` per table, имена без регрессии, WriteQty из палитры.
+
+> [2026-06-14] Задача: сборка net452 — ошибка CS0136 в `TableGrid.cs` строка 5905.
+> Причина: в `AssignCellsData` переменная `bindY` (double, координата) и внутри того же цикла `bindY` (string, метка для лога `[GEO]`).
+> Правка: метка лога переименована в `bindYMethod`.
+> Результат: ожидает пересборки VS / `build-ac2016.cmd`.
+
+> [2026-06-14] Задача: план fix_names_qty_post-kv — универсальные имена merged-блоков, qty sub-row+стиль, палитра vs scope.
+> Правка: `ResolveNameForKey` — без nextKeyTop cap при isMerged; `HasCyrillicInMarkBlock`/`HasNameTextOwnedByKey`; cellOnly `reason=merged-block|missing-cyrillic`; `FindQtyTextInCell` rowTop only; `ResolveQtyTableTextAppearanceForScope(scope, rowTop)`; `ReportPaletteVsScopeNamesDiagnostic`; убраны `key==1`, `key<=3` diag; docs §23, INSTRUCTION §8.3; план `_IMPLEMENTED.md`.
+> Результат: КОД ГОТОВ — пересборка net452, NETLOAD; проверка: `[NAME] reason=merged-block`, `[WRITEQTY] from=colName-rowTop`, `[POSC] Палитра: ключей=N, имён=M`.

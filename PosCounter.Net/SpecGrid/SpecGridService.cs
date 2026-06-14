@@ -52,6 +52,8 @@ namespace PosCounter.Net.SpecGrid
             }
 
             SpecGridLog.ResetDiagSession(doc);
+            SpecDiagPolicy.ResetSession();
+            SpecGridLog.WriteDiag(doc, SpecGridLog.FormatDllBuildStamp());
             var paletteKeyCount = qtyByKey?.Count ?? 0;
             SpecGridLog.WriteDiag(doc, $"Палитра qty: ключей={paletteKeyCount} (перед спецификацией)");
 
@@ -79,48 +81,94 @@ namespace PosCounter.Net.SpecGrid
                                 doc,
                                 $"Таблица {scopeNum} pass1: ColMark={scope.Pass1ColMark} ColName={scope.Pass1ColName} ColQty={scope.Pass1ColQty} topBand={scope.Pass1HeaderDetectedByTopTextBand}");
 
-                            if (scope.Valid
-                                && (scope.ColMark < 0 || scope.ColName < 0)
-                                && TableGridBuilder.TryInferColumnsFromData(scope, qtyByKey, log))
+                            if (i == 0)
                             {
-                                SpecGridLog.WriteDiag(
-                                    doc,
-                                    $"Таблица {scopeNum}: fallback «столбцы по данным» (pass1: ColMark={scope.Pass1ColMark} ColName={scope.Pass1ColName} ColQty={scope.Pass1ColQty})");
-                                if (!string.IsNullOrWhiteSpace(scope.InferenceColQtyScoresSummary))
+                                if (TableGridBuilder.TryLockColumnSchema(scope, log))
                                 {
-                                    SpecGridLog.WriteDiag(doc, scope.InferenceColQtyScoresSummary);
+                                    if (scope.ColQty >= 0 && !string.IsNullOrWhiteSpace(scope.ColQtySource))
+                                    {
+                                        SpecGridLog.WriteDiag(
+                                            doc,
+                                            $"Таблица {scopeNum} ColQty={scope.ColQty} источник={scope.ColQtySource}");
+                                    }
                                 }
-
-                                if (!string.IsNullOrWhiteSpace(scope.DbTextHeaderBandSummary))
+                                else if (scope.Valid
+                                    && (scope.ColMark < 0 || scope.ColName < 0)
+                                    && TableGridBuilder.TryInferColumnsFromData(scope, qtyByKey, log))
                                 {
-                                    SpecGridLog.WriteDiag(doc, scope.DbTextHeaderBandSummary);
+                                    ProcessInferColumnsFallback(doc, scope, scopeNum, log);
                                 }
-
-                                if (scope.ColQty < 0)
+                                else if (tablePicks.Count > 1)
                                 {
-                                    TableGridBuilder.TryResolveMissingColQty(scope, log);
+                                    SpecGridLog.WriteCommandLine(
+                                        doc,
+                                        "[POSC] Шапка не найдена в первой таблице — выделите лист с подписями Поз./Наименование/Кол.");
                                 }
-
-                                if (scope.ColQty >= 0 && !string.IsNullOrWhiteSpace(scope.ColQtySource))
+                            }
+                            else if (SpecGridSession.ColumnSchema?.IsLocked == true)
+                            {
+                                if (TableGridBuilder.TryApplyInheritedColumnSchema(
+                                        scope,
+                                        SpecGridSession.ColumnSchema,
+                                        log,
+                                        out var inheritFailReason))
                                 {
+                                    TableGridBuilder.RebindScopeKeysAndNames(
+                                        scope,
+                                        scope.HorizForBind,
+                                        log,
+                                        passLabel: "inherited-schema");
+                                    TableGridBuilder.FillMarkNamesFromMergeGroupsPublic(scope, log);
+                                    TableGridBuilder.ApplyStandardColumnLayout(scope, log);
                                     SpecGridLog.WriteDiag(
                                         doc,
                                         $"Таблица {scopeNum} ColQty={scope.ColQty} источник={scope.ColQtySource}");
                                 }
-                                else if (!string.IsNullOrWhiteSpace(scope.ColQtyFallbackDiag))
+                                else
                                 {
-                                    SpecGridLog.WriteDiag(doc, $"ColQty fallback: {scope.ColQtyFallbackDiag}");
-                                }
+                                    var reason = string.IsNullOrWhiteSpace(inheritFailReason)
+                                        ? "unknown"
+                                        : inheritFailReason;
+                                    SpecGridLog.WriteDiag(
+                                        doc,
+                                        $"[SCHEMA] inherit-fail scope={scope.ScopeIndex} reason={reason}");
 
-                                TableGridBuilder.RebindScopeKeysAndNames(
-                                    scope,
-                                    scope.HorizForBind,
-                                    log,
-                                    passLabel: "infer-data");
-                                TableGridBuilder.FillMarkNamesFromMergeGroupsPublic(scope, log);
+                                    var objCount = scope.PickedObjectIds?.Count ?? scope.LineCount;
+                                    if (TableGridBuilder.IsContinuationPickTooSmall(scope))
+                                    {
+                                        SpecGridLog.WriteCommandLine(
+                                            doc,
+                                            $"[POSC] Рамка продолжения слишком мала ({objCount} объектов) — выделите весь лист «Продолжение» (~200+ объектов)");
+                                    }
+                                    else if (scope.Valid
+                                        && TableGridBuilder.TryInferColumnsFromData(scope, qtyByKey, log))
+                                    {
+                                        SpecGridLog.WriteDiag(doc, "[SCHEMA] inherit-fail → fallback infer-data");
+                                        ProcessInferColumnsFallback(doc, scope, scopeNum, log);
+                                    }
+                                    else
+                                    {
+                                        SpecGridLog.WriteCommandLine(
+                                            doc,
+                                            $"[POSC] Схема столбцов не применена к таблице {scopeNum} — проверьте рамку продолжения.");
+                                    }
+                                }
+                            }
+                            else if (scope.Valid
+                                && (scope.ColMark < 0 || scope.ColName < 0)
+                                && TableGridBuilder.TryInferColumnsFromData(scope, qtyByKey, log))
+                            {
+                                ProcessInferColumnsFallback(doc, scope, scopeNum, log);
+                            }
+
+                            TableGridBuilder.BuildKeyToRowMarkSampleDiag(scope);
+                            if (!string.IsNullOrWhiteSpace(scope.KeyToRowMarkSampleDiag))
+                            {
+                                SpecGridLog.WriteTrace("MARK", $"табл.{scopeNum} {scope.KeyToRowMarkSampleDiag}");
                             }
 
                             ReportUnassignedTextsDiagnostic(doc, scope, scopeNum);
+                            TableGridBuilder.ReportHeaderTraceDiagnostic(scope, scopeNum);
                             TableGridBuilder.ReportMarkNamesDiagnostic(doc, scope, scopeNum);
 
                             builtScopes.Add(scope);
@@ -136,14 +184,26 @@ namespace PosCounter.Net.SpecGrid
                         ReportDetectedHeader(doc, builtScopes);
                         ReportEmptyMarkColumnWarnings(doc, builtScopes);
 
+                        foreach (var scope in builtScopes)
+                        {
+                            if (scope?.Valid == true)
+                            {
+                                TableGridBuilder.ApplyStandardColumnLayout(scope, log);
+                            }
+                        }
+
                         result.QtyWritten = WriteQtyInTransaction(tr, qtyByKey, log, out var skipped);
                         result.QtySkipped = skipped;
+                        result.MissingQtyMarks = CollectMissingQtyMarks(qtyByKey);
+                        SpecDiagPolicy.RegisterMissingQtyKeys(result.MissingQtyMarks);
                         ReportWriteQtyDiagnostic(doc, builtScopes, result.QtyWritten, skipped);
                         ReportScopeSummaryDiagnostic(doc, builtScopes);
+                        var combinedNames = BuildCombinedMarkNames();
+                        ReportPaletteVsScopeNamesDiagnostic(doc, qtyByKey, combinedNames);
+                        ReportKvSummaryDiagnostic(doc, builtScopes, qtyByKey, result.QtyWritten);
                         tr.Commit();
                     }
 
-                    result.MissingQtyMarks = CollectMissingQtyMarks(qtyByKey);
                     ReportMissingQtyMarks(doc, result.MissingQtyMarks);
 
                     try
@@ -164,6 +224,51 @@ namespace PosCounter.Net.SpecGrid
 
             result.Success = true;
             return result;
+        }
+
+        private static void ProcessInferColumnsFallback(
+            Document doc,
+            ScopeGridResult scope,
+            int scopeNum,
+            SpecGridLog log)
+        {
+            SpecGridLog.WriteDiag(
+                doc,
+                $"Таблица {scopeNum}: fallback «столбцы по данным» (pass1: ColMark={scope.Pass1ColMark} ColName={scope.Pass1ColName} ColQty={scope.Pass1ColQty})");
+            if (!string.IsNullOrWhiteSpace(scope.InferenceColQtyScoresSummary))
+            {
+                SpecGridLog.WriteDiag(doc, scope.InferenceColQtyScoresSummary);
+            }
+
+            if (!string.IsNullOrWhiteSpace(scope.DbTextHeaderBandSummary))
+            {
+                SpecGridLog.WriteDiag(doc, scope.DbTextHeaderBandSummary);
+            }
+
+            if (scope.ColQty < 0)
+            {
+                TableGridBuilder.TryResolveMissingColQty(scope, log);
+            }
+
+            TableGridBuilder.ApplyStandardColumnLayout(scope, log);
+
+            if (scope.ColQty >= 0 && !string.IsNullOrWhiteSpace(scope.ColQtySource))
+            {
+                SpecGridLog.WriteDiag(
+                    doc,
+                    $"Таблица {scopeNum} ColQty={scope.ColQty} источник={scope.ColQtySource}");
+            }
+            else if (!string.IsNullOrWhiteSpace(scope.ColQtyFallbackDiag))
+            {
+                SpecGridLog.WriteDiag(doc, $"ColQty fallback: {scope.ColQtyFallbackDiag}");
+            }
+
+            TableGridBuilder.RebindScopeKeysAndNames(
+                scope,
+                scope.HorizForBind,
+                log,
+                passLabel: "infer-data");
+            TableGridBuilder.FillMarkNamesFromMergeGroupsPublic(scope, log);
         }
 
         private static void ReportDetectedHeader(Document doc, IReadOnlyList<ScopeGridResult> scopes)
@@ -201,7 +306,11 @@ namespace PosCounter.Net.SpecGrid
                 var mark = DescribeHeaderColumn(scope, scope.ColMark);
                 var name = DescribeHeaderColumn(scope, scope.ColName);
                 var qty = DescribeHeaderColumn(scope, scope.ColQty);
-                var inferred = scope.ColumnsInferredFromData ? " (столбцы по данным)" : string.Empty;
+                var inferred = scope.ColumnsInheritedFromSchema
+                    ? " (столбцы от эталона)"
+                    : scope.ColumnsInferredFromData
+                        ? " (столбцы по данным)"
+                        : string.Empty;
                 var msg =
                     $"[POSC] Распознана шапка (таблица {scopeNum}){inferred}: " +
                     $"Марка — {(scope.ColMark >= 0 ? $"столбец {scope.ColMark} «{mark}»" : "не найдена")}; " +
@@ -369,7 +478,20 @@ namespace PosCounter.Net.SpecGrid
 
         private static void ReportUnassignedTextsDiagnostic(Document doc, ScopeGridResult scope, int scopeNum)
         {
-            if (doc == null || scope == null || scope.UnassignedTextCountAfterDataPass <= 0)
+            if (doc == null || scope == null)
+            {
+                return;
+            }
+
+            if (scope.UnassignedNameFixLines != null && scope.UnassignedNameFixLines.Count > 0)
+            {
+                foreach (var line in scope.UnassignedNameFixLines.Take(5))
+                {
+                    SpecGridLog.WriteDiag(doc, $"Таблица {scopeNum} {line}");
+                }
+            }
+
+            if (scope.UnassignedTextCountAfterDataPass <= 0)
             {
                 return;
             }
@@ -403,13 +525,26 @@ namespace PosCounter.Net.SpecGrid
 
                 if (scope.ColQty < 0)
                 {
-                    SpecGridLog.WriteDiag(
+                    SpecGridLog.WriteDiagTail(
                         doc,
                         $"Таблица {scope.ScopeIndex + 1} WriteQty пропущен: ColQty=-1");
                 }
             }
 
-            SpecGridLog.WriteDiag(doc, $"WriteQty итог: записано={qtyWritten}, пропущено={skipped}");
+            foreach (var scope in scopes)
+            {
+                if (scope?.WriteQtyDiagLines == null || scope.WriteQtyDiagLines.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (var line in scope.WriteQtyDiagLines.Take(15))
+                {
+                    SpecGridLog.WriteDiagTail(doc, $"Таблица {scope.ScopeIndex + 1} {line}");
+                }
+            }
+
+            SpecGridLog.WriteDiagTail(doc, $"WriteQty итог: записано={qtyWritten}, пропущено={skipped}");
         }
 
         private static void ReportScopeSummaryDiagnostic(Document doc, IReadOnlyList<ScopeGridResult> scopes)
@@ -430,14 +565,118 @@ namespace PosCounter.Net.SpecGrid
                 var namesFilled = scope.MarkNamePairs?.Count(kv => !string.IsNullOrWhiteSpace(kv.Value)) ?? 0;
                 var qtySource = string.IsNullOrWhiteSpace(scope.ColQtySource)
                     ? string.Empty
-                    : $" источник ColQty={scope.ColQtySource}";
-                SpecGridLog.WriteDiag(
+                    : $" источник={scope.ColQtySource}";
+                var layoutFix = string.IsNullOrWhiteSpace(scope.ColQtyLayoutFixDiag)
+                    ? string.Empty
+                    : $" layout={scope.ColQtyLayoutFixDiag}";
+                var colQtyWarn = scope.ColQty < 0 ? " ВНИМАНИЕ: ColQty не найден — WriteQty пропущен" : string.Empty;
+                SpecGridLog.WriteDiagTail(
                     doc,
-                    $"Таблица {scopeNum} ИТОГ: ColMark={scope.ColMark} ColName={scope.ColName} ColQty={scope.ColQty}{qtySource} | KeyToRowMark={scope.KeyToRowMark?.Count ?? 0} | имена={namesFilled}");
+                    $"Таблица {scopeNum} ИТОГ: ColMark={scope.ColMark} ColName={scope.ColName} ColQty={scope.ColQty}{qtySource}{layoutFix}{colQtyWarn} | KeyToRowMark={scope.KeyToRowMark?.Count ?? 0} | имена={namesFilled}");
             }
 
             var combined = BuildCombinedMarkNames();
-            SpecGridLog.WriteDiag(doc, $"Имена в палитру (всего ключей): {combined.Count}");
+            SpecGridLog.WriteDiagTail(doc, $"Имена в палитру (всего ключей): {combined.Count}");
+            SpecGridLog.WriteDiagTail(doc, SpecGridLog.FormatDllBuildStamp());
+        }
+
+        private static void ReportPaletteVsScopeNamesDiagnostic(
+            Document doc,
+            IReadOnlyDictionary<int, int> qtyByKey,
+            Dictionary<int, string> namesFromTables)
+        {
+            if (doc == null)
+            {
+                return;
+            }
+
+            var paletteKeyCount = qtyByKey?.Count ?? 0;
+            var namesCount = namesFromTables?.Count ?? 0;
+            if (paletteKeyCount <= 0 || namesCount >= paletteKeyCount)
+            {
+                return;
+            }
+
+            var nameKeys = new HashSet<int>(namesFromTables?.Keys ?? Enumerable.Empty<int>());
+            var missingList = (qtyByKey?.Keys ?? Enumerable.Empty<int>())
+                .Where(k => !nameKeys.Contains(k))
+                .OrderBy(k => k)
+                .Take(12)
+                .ToList();
+
+            SpecGridLog.WriteCommandLine(
+                doc,
+                $"[POSC] Палитра: ключей={paletteKeyCount}, имён из выбранных таблиц={namesCount}.");
+            if (missingList.Count > 0)
+            {
+                SpecGridLog.WriteCommandLine(
+                    doc,
+                    $"[POSC] Без имени (нет на выделенных листах): {string.Join(", ", missingList)}");
+            }
+
+            SpecGridLog.WriteCommandLine(
+                doc,
+                "[POSC] Выделите все листы спецификации, если нужны имена для всех марок палитры.");
+        }
+
+        private static void ReportKvSummaryDiagnostic(
+            Document doc,
+            IReadOnlyList<ScopeGridResult> scopes,
+            IReadOnlyDictionary<int, int> qtyByKey,
+            int totalQtyWritten)
+        {
+            if (doc == null || scopes == null)
+            {
+                return;
+            }
+
+            var writtenByScope = new Dictionary<int, int>();
+            foreach (var scope in scopes)
+            {
+                if (scope?.WriteQtyDiagLines == null)
+                {
+                    continue;
+                }
+
+                var count = scope.WriteQtyDiagLines.Count(
+                    l => l.IndexOf("action=update", StringComparison.OrdinalIgnoreCase) >= 0
+                        || l.IndexOf("action=create", StringComparison.OrdinalIgnoreCase) >= 0);
+                writtenByScope[scope.ScopeIndex] = count;
+            }
+
+            var allEmpty = scopes
+                .Where(s => s?.EmptyNameKeys != null)
+                .SelectMany(s => s.EmptyNameKeys)
+                .Distinct()
+                .OrderBy(k => k)
+                .ToList();
+            SpecDiagPolicy.RegisterEmptyNameKeys(allEmpty);
+
+            foreach (var scope in scopes)
+            {
+                if (scope == null)
+                {
+                    continue;
+                }
+
+                var scopeNum = scope.ScopeIndex + 1;
+                var keys = scope.KeyToRowMark?.Count ?? 0;
+                var names = scope.MarkNamePairs?.Count(kv => !string.IsNullOrWhiteSpace(kv.Value)) ?? 0;
+                var empty = scope.EmptyNameKeys?.Count ?? 0;
+                var emptyList = empty > 0
+                    ? string.Join(",", scope.EmptyNameKeys.OrderBy(k => k).Take(12))
+                    : string.Empty;
+                var headerPath = string.IsNullOrWhiteSpace(scope.HeaderPath) ? "?" : scope.HeaderPath;
+                var schema = string.IsNullOrWhiteSpace(scope.SchemaSource)
+                    ? (scope.ColumnsInheritedFromSchema ? "inherited" : scope.ColumnsInferredFromData ? "infer" : "grid")
+                    : scope.SchemaSource;
+                var outside = scope.UnassignedTextCountAfterDataPass;
+                var qtyWritten = writtenByScope.TryGetValue(scope.ScopeIndex, out var qw) ? qw : 0;
+                var colDes = scope.ColDesignation >= 0 ? scope.ColDesignation.ToString(CultureInfo.InvariantCulture) : "-";
+                SpecGridLog.WriteDiagTail(
+                    doc,
+                    $"[KV-SUMMARY] табл.{scopeNum} ColM/N/Q/D={scope.ColMark}/{scope.ColName}/{scope.ColQty}/{colDes} headerPath={headerPath} keys={keys} names={names} empty={empty} emptyKeys={emptyList} qtyWritten={qtyWritten} outside={outside} schema={schema}");
+            }
         }
 
         private static string DescribeHeaderColumn(ScopeGridResult scope, int col)
@@ -450,6 +689,11 @@ namespace PosCounter.Net.SpecGrid
             var s = MTextPlainText.SanitizeRawContents(TableGridBuilder.BuildHeaderOnlyColumnText(scope, col));
             if (string.IsNullOrWhiteSpace(s))
             {
+                if (scope.ColumnsInferredFromData)
+                {
+                    return "— (продолжение)";
+                }
+
                 s = MTextPlainText.SanitizeRawContents(TableGridBuilder.BuildHeaderTextForColumn(scope, col));
             }
 
@@ -633,8 +877,9 @@ namespace PosCounter.Net.SpecGrid
             }
 
             // Стиль/цвет/толщина линии — только из своей таблицы (scope 0, scope 1, …), не общий по всем pick.
-            var appearance = ResolveQtyTableTextAppearanceForScope(tr, scope);
+            var appearanceCache = new Dictionary<int, QtyTableTextAppearance>();
 
+            scope.WriteQtyDiagLines.Clear();
             var written = 0;
             foreach (var key in scope.KeyToRowTopSub.Keys.OrderBy(k => k))
             {
@@ -656,6 +901,13 @@ namespace PosCounter.Net.SpecGrid
                     continue;
                 }
 
+                if (!appearanceCache.TryGetValue(rowTop, out var appearance))
+                {
+                    appearance = ResolveQtyTableTextAppearanceForScope(tr, scope, rowTop);
+                    appearanceCache[rowTop] = appearance;
+                }
+
+                var rowMark = scope.KeyToRowMark.TryGetValue(key, out var rm) ? rm : -1;
                 var rowBottomEx = ResolveQtyCellRowBottomExByColQtyGrid(scope, rowTop, col, key);
                 var point = ResolveQtyInsertPoint(scope, rowTop, rowBottomEx, col);
                 var text = qty.ToString(CultureInfo.InvariantCulture);
@@ -664,6 +916,15 @@ namespace PosCounter.Net.SpecGrid
                     UpsertQtyText(tr, btr, scope, rowTop, rowBottomEx, col, point, text, appearance, log, scope.ScopeIndex, key);
                     scope.CellText[rowTop, col] = text;
                     written++;
+                    if (scope.WriteQtyDiagLines.Count < 20
+                        && (SpecDiagPolicy.IsSampleKey(scope, key) || written <= 5))
+                    {
+                        var styleFrom = appearance.Found ? "colName-rowTop" : "fallback";
+                        var h = appearance.HasTextHeight ? appearance.TextHeight.ToString("F1", CultureInfo.InvariantCulture) : "?";
+                        var layer = appearance.Layer ?? "?";
+                        scope.WriteQtyDiagLines.Add(
+                            $"WriteQty key={key} rowTop={rowTop} rowMark={rowMark} colQty={col} qty={qty} Y={point.Y:F1} style=h={h} layer={layer} from={styleFrom} action=update (палитра)");
+                    }
                 }
                 catch
                 {
@@ -805,6 +1066,27 @@ namespace PosCounter.Net.SpecGrid
             return null;
         }
 
+        private static void TraceWriteQty(
+            int scopeIndex,
+            int key,
+            string action,
+            double targetY,
+            double entityY,
+            string text,
+            int rowTop,
+            int col)
+        {
+            if (key > 7 && (key < 60 || key > 70))
+            {
+                return;
+            }
+
+            var entY = double.IsNaN(entityY) ? "—" : entityY.ToString("F1", CultureInfo.InvariantCulture);
+            SpecGridLog.WriteTrace(
+                "WRITEQTY",
+                $"scope={scopeIndex} key={key} {action} rowTop={rowTop} col={col} qty={text} targetY={targetY:F1} entY={entY}");
+        }
+
         private static void UpsertQtyText(
             Transaction tr,
             BlockTableRecord btr,
@@ -820,24 +1102,41 @@ namespace PosCounter.Net.SpecGrid
             int key)
         {
             var existing = FindQtyTextInCell(tr, scope, rowTop, rowBottomEx, col, point.Y);
+            var existingY = existing != null ? GetEntityTextPoint(existing).Y : double.NaN;
+            var halfRowStep = ResolveHalfRowStepY(scope, rowTop);
+            if (existing != null && !double.IsNaN(existingY) && Math.Abs(existingY - point.Y) > halfRowStep)
+            {
+                TraceWriteQty(scopeIndex, key, "skip-far-entY", point.Y, existingY, text, rowTop, col);
+                existing = null;
+                existingY = double.NaN;
+            }
+
+            string action;
             if (existing is DBText db)
             {
+                action = "update DBText";
                 db.UpgradeOpen();
                 db.TextString = text;
                 ApplyQtyTableTextStyle(db, tableAppearance, point);
+                TraceWriteQty(scopeIndex, key, action, point.Y, existingY, text, rowTop, col);
                 return;
             }
 
             if (existing is MText mt)
             {
+                action = "update MText";
                 mt.UpgradeOpen();
                 mt.Contents = text;
                 mt.TextHeight = ResolveQtyTextHeight(tableAppearance);
                 mt.Location = point;
                 ApplyQtyTableTextStyle(mt, tableAppearance);
                 ApplyQtyCenterAlignmentForMText(mt, point);
+                TraceWriteQty(scopeIndex, key, action, point.Y, existingY, text, rowTop, col);
                 return;
             }
+
+            action = "create DBText";
+            TraceWriteQty(scopeIndex, key, action, point.Y, existingY, text, rowTop, col);
 
             // §19.15: новый текст — стиль штатной колонки «Кол.» (слой + TextStyle), не примечания.
             var dbText = new DBText
@@ -858,7 +1157,10 @@ namespace PosCounter.Net.SpecGrid
         /// Стиль «Кол.» для одной таблицы (scope 0, 1, …): цвет/линия/шрифт как у **основного текста таблицы** (NAME),
         /// не как у сносок инженера в ячейке «Кол.».
         /// </summary>
-        private static QtyTableTextAppearance ResolveQtyTableTextAppearanceForScope(Transaction tr, ScopeGridResult scope)
+        private static QtyTableTextAppearance ResolveQtyTableTextAppearanceForScope(
+            Transaction tr,
+            ScopeGridResult scope,
+            int rowTop = -1)
         {
             if (scope == null || !scope.Valid || scope.ColQty < 0)
             {
@@ -866,8 +1168,18 @@ namespace PosCounter.Net.SpecGrid
             }
 
             var samples = new List<QtyAppearanceSample>();
-            AppendQtyStyleSamplesFromQtyColumn(tr, scope, samples, headerOnly: true);
-            AppendQtyDigitStyleSamplesFromScope(tr, scope, samples);
+            if (rowTop >= 0)
+            {
+                AppendTableBodyStyleFromColumnAtRow(tr, scope, scope.ColName, rowTop, samples, requireNameText: true);
+                AppendTableBodyStyleFromColumnAtRow(tr, scope, scope.ColMark, rowTop, samples, requireNameText: false);
+            }
+
+            if (samples.Count == 0)
+            {
+                AppendQtyStyleSamplesFromQtyColumn(tr, scope, samples, headerOnly: true);
+                AppendQtyDigitStyleSamplesFromScope(tr, scope, samples);
+            }
+
             if (samples.Count == 0)
             {
                 AppendTableBodyStyleSamplesFromScope(tr, scope, samples);
@@ -944,6 +1256,66 @@ namespace PosCounter.Net.SpecGrid
             public LineWeight LineWeight = LineWeight.ByLayer;
             public string ColorKey = string.Empty;
             public double TextHeight;
+        }
+
+        private static void AppendTableBodyStyleFromColumnAtRow(
+            Transaction tr,
+            ScopeGridResult scope,
+            int col,
+            int row,
+            List<QtyAppearanceSample> samples,
+            bool requireNameText)
+        {
+            if (col < 0 || row < scope.RowDataStart)
+            {
+                return;
+            }
+
+            foreach (var id in scope.PickedObjectIds)
+            {
+                Entity ent;
+                try
+                {
+                    ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (ent is not DBText and not MText)
+                {
+                    continue;
+                }
+
+                var pt = GetEntityTextPoint(ent);
+                if (!CellIndex.TryGetCellIndex(pt.X, pt.Y, scope.GridXs, scope.GridYs, out var entRow, out var cellCol)
+                    || cellCol != col
+                    || entRow != row)
+                {
+                    continue;
+                }
+
+                if (!PassesTableBodyLayerForQtyStyle(scope, ent.Layer, allowAnyTableContentLayer: false))
+                {
+                    continue;
+                }
+
+                var plain = GetEntityPlainText(ent);
+                if (requireNameText)
+                {
+                    if (!MTextPlainText.HasLetter(plain) || plain.Trim().Length < 4)
+                    {
+                        continue;
+                    }
+                }
+                else if (string.IsNullOrWhiteSpace(plain))
+                {
+                    continue;
+                }
+
+                samples.Add(CreateQtyAppearanceSample(ent));
+            }
         }
 
         /// <summary>Образцы стиля из штатного текста таблицы: «Наименование», «Марка» (слои основного содержимого).</summary>
@@ -1471,9 +1843,32 @@ namespace PosCounter.Net.SpecGrid
             return scope.GridYs.Count - 1;
         }
 
+        /// <summary>Y центра первой суб-строки блока марки (rowTop..rowTop+1), не середина всего span.</summary>
+        private static double ResolveQtyInsertY(ScopeGridResult scope, int rowTop)
+        {
+            if (scope?.GridYs == null || scope.GridYs.Count < 2 || rowTop < 0)
+            {
+                return 0;
+            }
+
+            var rowBottomForY = Math.Min(rowTop + 1, scope.GridYs.Count - 1);
+            return (scope.GridYs[rowTop] + scope.GridYs[rowBottomForY]) * 0.5;
+        }
+
+        private static double ResolveHalfRowStepY(ScopeGridResult scope, int rowTop)
+        {
+            if (scope?.GridYs == null || scope.GridYs.Count < 2 || rowTop < 0)
+            {
+                return 1.0;
+            }
+
+            var rowBottomForY = Math.Min(rowTop + 1, scope.GridYs.Count - 1);
+            return Math.Abs(scope.GridYs[rowTop] - scope.GridYs[rowBottomForY]) * 0.5;
+        }
+
         private static Point3d ResolveQtyInsertPoint(ScopeGridResult scope, int rowTop, int rowBottomEx, int colQty)
         {
-            var y = (scope.GridYs[rowTop] + scope.GridYs[rowBottomEx]) * 0.5;
+            var y = ResolveQtyInsertY(scope, rowTop);
             var x = ResolveVisualQtyColumnCenterX(scope, colQty);
             return new Point3d(x, y, 0);
         }
@@ -1576,6 +1971,7 @@ namespace PosCounter.Net.SpecGrid
             double targetCenterY)
         {
             var mergedSpan = rowBottomEx > rowTop + 1;
+            var searchRowBottomEx = mergedSpan ? rowTop + 1 : rowBottomEx;
             Entity best = null;
             var bestScore = -1;
             var bestDist = double.MaxValue;
@@ -1599,7 +1995,7 @@ namespace PosCounter.Net.SpecGrid
                 var pt = GetEntityTextPoint(ent);
                 if (mergedSpan)
                 {
-                    if (!IsPointInQtyCellSpan(pt, scope, rowTop, rowBottomEx, col))
+                    if (!IsPointInQtyCellSpan(pt, scope, rowTop, searchRowBottomEx, col))
                     {
                         continue;
                     }

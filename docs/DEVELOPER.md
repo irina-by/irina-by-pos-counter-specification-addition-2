@@ -2,7 +2,7 @@
 
 **Версия:** 4.2.0-table-grid-lines  
 **Сборки:** `dll 2016` (net452, .NET 4.5.2+ / AC 2016 SP1–2024), `dll 2026` (net8.0-windows)  
-**Дата актуализации:** 2026-06-10 (этап 3: DBText шапка AC 2016, numeric ColQty по AllTexts)
+**Дата актуализации:** 2026-06-13 (diag_log_gt20: unassigned→name, continuation name row end, skip reasons)
 
 ---
 
@@ -436,7 +436,69 @@ CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `markBlockEnd`, `rowEndEx`
 
 План этапа 1: `.cursor/plans/fix_ac2016_spec_recognition.plan.md`.  
 План этапа 2 (ColQty fallback): `.cursor/plans/fix_ac2016_spec_recognition_stage2.plan.md`.  
-План этапа 3 (DBText шапка + numeric AllTexts): `.cursor/plans/fix_ac2016_dbtext_header.plan.md`.
+План этапа 3 (DBText шапка + numeric AllTexts): `.cursor/plans/fix_ac2016_dbtext_header.plan.md`.  
+План fix name/qty regression: `.cursor/plans/fix_name_qty_regression.plan.md`.  
+План fix_colqty_gt20_names: `.cursor/plans/fix_colqty_gt20_names.plan.md`.  
+План fix_gt-20_bleed_colqty: `.cursor/plans/fix_gt-20_bleed_colqty.plan.md`.  
+План diag_logs_colqty_names: `.cursor/plans/diag_logs_colqty_names_66750185.plan.md`.  
+План fix_gt20_names_qty: `.cursor/plans/fix_gt20_names_qty_85bae939.plan.md` → отчёт `.cursor/plans/fix_gt20_names_qty_IMPLEMENTED.md`.  
+План header_anchor_schema: `.cursor/plans/header_anchor_schema.plan.md` → отчёт `.cursor/plans/header_anchor_schema_IMPLEMENTED.md`.  
+План fix_schema_inherit_table2: `.cursor/plans/fix_schema_inherit_table2_63fc7ffa.plan.md` → отчёт `.cursor/plans/fix_schema_inherit_table2_IMPLEMENTED.md`.
+
+| Компонент | Назначение |
+|-----------|------------|
+| `SpecColumnSchema` | Эталон ColMark/ColName/ColQty с таблицы 1 (реальная шапка pass1) |
+| `SpecGridSession.ColumnSchema` | Сессия якоря; сброс в `ClearScopes` |
+| `TryLockColumnSchema` | scope 0: `Pass1ColMark>=0 && Pass1ColName>=0` → lock, `[SCHEMA] locked` |
+| `TryAlignScopeColumnsToAnchorSchema` | Сопоставление столбцов продолжения по центрам X-полос якоря + сдвиг левого края сетки (допуск 50 мм) |
+| `TryApplyInheritedColumnSchema` | scope 1+: выравнивание → `inherited`/`aligned`, `ColQtySource=inherited`; `failReason`: `gridCols`, `X-mismatch`, `texts-outside`, `invalid` |
+| `ColumnsInheritedFromSchema` | Флаг scope; `RebindScopeKeysAndNames` skip DetectHeader |
+| `SpecGridService` inherit-fail | `[SCHEMA] inherit-fail reason=…`; предупреждение «рамка слишком мала»; fallback `TryInferColumnsFromData` → `inherit-fail → fallback infer-data` |
+| `ProcessInferColumnsFallback` | Старый путь «столбцы по данным» если якорь не зафиксирован или inherit не удался |
+
+| Компонент | Назначение |
+|-----------|------------|
+| `CreateTextSampleFromDbText` pass2 | `DataX/Y` = AlignmentPoint (не ExtentsTop); YMin/YMax из bbox для overlap |
+| `TryGetMTextBounds` pass2 | `DataX/Y` = `MText.Location`; YMin/YMax из Extents/BoundingPoints; `BoundsMethod=Location+Extents` |
+| `AssignCellsData` | Привязка Row/Col: `AlignX/Y` → `DataX/Y` |
+| `ColDesignation` | Столбец «Обозначение» (индекс 1) — не в имя |
+| `LooksLikeDesignationText` | Фильтр ГОСТ/TB100/GOST… (короткие коды) |
+| `IsTextInNameColumn` | Имя только `t.Col == ColName`, без designation |
+| `BuildCellMatrix` (ColName) | В ячейку col2 — только тексты с `t.Col == ColName` |
+| `ResolveNameForKey` | `useCellTextFromBlock`: cell-only при `cellJoined≥20` или RU на rowTop + multi-row; **без** `SupplementNamePartsInVerticalBand` при `cellJoined≥20`; cap `nextKeyTop` в supplement |
+| `RebindScopeKeysAndNames` | `TryResolveMissingColQty` только при `ColMark≥0 && ColName≥0` (нет `numeric col=0` до inference) |
+| `TryInferColQtyFromNumericColumn` | Пропуск столбца если `CountDataMarkKeysInColumn≥2` (не путать марки с qty) |
+| `FindQtyTextInCell` | Merged: поиск только `rowTop..rowTop+1` (как `ResolveQtyInsertY`) |
+| `UpsertQtyText` | Если `|entY-targetY|>halfRowStep` → `skip-far-entY` + create DBText |
+| `DescribeHeaderColumn` | При `ColumnsInferredFromData` без fallback на данные → «— (продолжение)» |
+| `[NAME]` trace | key 1–7, 52–57, 105–109 (в т.ч. `empty`) |
+| `ApplyMandatoryColQtyLayout` | Схема 0/1/2/3: **всегда** `ColQty = ColName+1`, в т.ч. при `ColQty=-1` |
+| `ApplyStandardColumnLayout` | После inference, rebind, numeric fallback и **перед WriteQty** |
+| `TryInferColQtyFromNumericColumn` | Стандарт 0/1/2/3: prefer col3 если `CountQtyLikeInColumn(col3)>=3` |
+| `ResolveQtyInsertY` | Y центра **первой суб-строки** `rowTop..rowTop+1` (не середина span) |
+| `DbTextHeaderMaxPlainLen` | 60 (было 25); отсев данных: `TryParseMarkKey` + `LooksLikeDesignationText` |
+| `AppendHeaderTextPart` | MText в шапке — по строкам (RU/EN в одной ячейке) |
+| `ColumnLooksLikeMassData` | Отсев col4 «Масса» при numeric (нестандартная схема) |
+| `ColQtyLayoutFixDiag` | `[POSC-DIAG]` например `4→3` |
+| `NameCol2DiagLines` | `[POSC-DIAG]` имя key=1..7 col2-lines, excluded-designation |
+| `KeyToRowMarkSampleDiag` | `[POSC-DIAG]` марки 55–75 |
+| `WriteQtyDiagLines` | `[POSC-DIAG]` `WriteQty key=N colQty=3 qty=Q Y=… (палитра)` |
+| `ReportScopeSummaryDiagnostic` | ИТОГ + `layout=4→3` + `ВНИМАНИЕ` при `ColQty=-1` (через `WriteDiagTail`) |
+| `SpecGridLog.WriteTrace` | `[POSC-DIAG] [COLQTY\|HEADER\|NAME\|WRITEQTY]` — видимые трассировки методов |
+| `SpecGridLog.FormatDllBuildStamp` | `build=` в начале и конце «Выбрать спецификацию» |
+| `ReportHeaderTraceDiagnostic` | `[HEADER]` scores по col0–5 |
+| `BuildHeaderOnlyColumnText` | При `ColumnsInferredFromData` — отсев ячеек с NameScore≥4 (не данные в шапке) |
+| `CapRowEndBeforeNextMarkNameLead` | Граница имени: не включать col2 строку перед цифрой следующей марки |
+| `ContainsCyrillic` / `HasCyrillicNameTextsInBand` | Supplement имён при `cellOnly` без русской строки |
+| `DetectHeaderByTopGridRows` | Шапка по строкам 0–1 (двуязычные подписи ГТ) |
+| `MarkHeaderTokens` / `NameHeaderTokens` | Расширенные токены: «марка поз», «mark it», «list of materials» |
+| `SanitizeMarkScoresForDigitOnlyHeaders` | Отсев col0 с заголовком-цифрой («9») при ≥10 марок в данных |
+| `CanLockColumnSchemaFromPass2` | `[SCHEMA] locked` при pass1=-1 и схеме 0/2/3 (grid/layout/dbTextBand) |
+| `IsContinuationPickTooSmall` | &lt;80 объектов — без infer на продолжении |
+| `AssignUnassignedTextsToNameColumn` | MText/DBText вне сетки: `DataX` в полосе `ColName` → `Col`+`Row`; CMD `unassigned→name` |
+| `UnassignedNameFixLines` | `[POSC-DIAG]` привязанные тексты (до 10 на scope) |
+| `ResolveContinuationNameRowEnd` | Продолжение: расширить диапазон col2 до `markBlockEnd`, если col2 пуст и нет standalone у следующей марки |
+| `ShouldLogNameRejectReason` | `[NAME] skip=designation/section/not-acceptable` для keys 52–57, 105–109 |
 
 | Компонент | Назначение |
 |-----------|------------|
@@ -471,6 +533,97 @@ CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `markBlockEnd`, `rowEndEx`
 | Пустой `CellText` на AC 2016 | `TryGetMTextBounds`: fallback `GetBoundingPoints()`; CMD `Текстов вне ячеек сетки` |
 | Версия DLL | `Commands.Initialize` → `[POSC] … (net452) build=…` — дата файла DLL |
 | Старый LISP | Не использовать `pos_counter_2016_2026.lsp`; только NETLOAD |
+
+---
+
+## 20. Missing qty vs пустое имя (2026-06-13)
+
+План: `.cursor/plans/диагноз_лога_gt-20_00c5083c.plan.md` (не редактировать).
+
+### «Количество не найдено в палитре для марок: …»
+
+`CollectMissingQtyMarksForScope` сравнивает `scope.KeyToRowMark.Keys` с `qtyByKey` из палитры (`TryBuildQtyByKeyFromAllRowsSnapshot` — **все** строки `_lastCountRows`, фильтры палитры не режут qty для записи).
+
+| Симптом | Причина | Действие |
+|---------|---------|----------|
+| `WriteQty итог: записано=N, пропущено=0` и список missing | Марка **есть в спецификации**, **нет в подсчёте** | ЗАПУСТИТЬ по зоне с выносками; проверить слой/тип объектов |
+| `пропущено>0` | Геометрия ячейки ColQty / `ColQty=-1` | CMD `ИТОГ` + `[WRITEQTY]` |
+
+Это **не сбой WriteQty**, если `пропущено=0`.
+
+### Пустые наименования в хвосте продолжений
+
+| Группа | Причина | Правка в коде |
+|--------|---------|---------------|
+| MText вне сетки (`Row=-1`, сдвиг DataX) | `AssignCellsData` не привязал строку | `AssignUnassignedTextsToNameColumn` после pass2 и в `RebindScopeKeysAndNames` |
+| Текст найден, `parts=0` | Отсев `LooksLikeDesignationText` / `IsAcceptableNameContinuation` | `[NAME] skip=…` по `SpecDiagPolicy` |
+| `texts=0` на листе-продолжении | Наименование только на предыдущем листе | `ResolveContinuationNameRowEnd` расширяет band до `markBlockEnd` при пустом col2 |
+
+После `RebindScopeKeysAndNames` при `unassignedFixed>0` пересобирается `CellText`.
+
+---
+
+## 21. Универсальный KV (2026-06-13)
+
+План: `.cursor/plans/авто_kv_ac2016_a1fdd702.plan.md` (не редактировать). Реализация: `.cursor/plans/авто_kv_ac2016_a1fdd702_IMPLEMENTED.md`.
+
+### Принцип
+
+Явно заданы только **токены шапки** (`MarkHeaderTokens`, `NameHeaderTokens`, `DesignationHeaderTokens`, `ScoreQtyHeader`). Марки, столбцы и имена — из геометрии сетки, overlap и палитры.
+
+### Ключевые модули
+
+| Модуль | Роль |
+|--------|------|
+| `MarkKeyParser.cs` | Префиксы Поз./Марка/№ как в Engine; `TryParseMarkKey` делегирует сюда |
+| `DetectHeaderBoundaryAndColumns` | Скан строк 0..5 по токенам; `headerPath=gridTokens`; topBand 2000 — last-resort |
+| `ResolveNameForKey` | `cellOnly` при `len≥20 && AllNameRowsHaveCellText`; иначе CellText+AllTexts |
+| `PickBestNameTextForRow` | Один текст на строку по NameScore/длине/YMax |
+| `TryGetMTextBounds` | DataY = **ExtentsTop**; overlap по YMin/YMax |
+| `SpecDiagPolicy.cs` | Trace без `key==N`; бюджеты [NAME]/[MARK]/[GEO] |
+| ColQty | Evidence-only: header/numeric/inherited; без mandatory 0/2/3 |
+
+### Qty
+
+По-прежнему **только из палитры** (`qtyByKey`); не из ячеек таблицы.
+
+---
+
+## 22. Диагностика KV в CMD (2026-06-13)
+
+Префикс: `[POSC-DIAG] [КАТЕГОРИЯ] …`. Итог: `[KV-SUMMARY]` (вне бюджета, `WriteDiagTail`).
+
+| Категория | Что смотреть |
+|-----------|--------------|
+| `[HEADER-SCAN]` | `path=gridTokens` — primary OK; `path=topBand fallback` — предупреждение |
+| `[MARK]` | `parse … prefix=Поз.`; `KeyToRowMark count=… sample:` |
+| `[GEO]` | `bindY=ExtentsTop` (MText); `unassigned→name` |
+| `[NAME]` | `mode=cellOnly/cell+all`; `pick-best`; `skip=designation`; `empty texts=N parts=0` |
+| `[COLQTY]` | `source=grid\|layout-evidence\|inherited`; `reason=mass-column` |
+| `[KV-SUMMARY]` | `headerPath`, `keys`, `names`, `empty`, `qtyWritten`, `outside`, `schema` |
+
+`grep` по `SpecGrid`: нет `key == 52`, `ColMark != 0`, mandatory `0/2/3`.
+
+### Merged-блоки и cellOnly (2026-06-14, post KV)
+
+План: `.cursor/plans/fix_names_qty_post-kv_dd94bc56.plan.md`.
+
+| Правило | Реализация |
+|---------|------------|
+| Граница имени merged | `nextKeyTop` cap **не** применяется при `isMerged`; расширение до `nextMarkRow+1`; `HasNameTextOwnedByKey` для строк с чужой цифрой в ColMark |
+| cellOnly | Отключается при `reason=merged-block` или `missing-cyrillic` (`HasCyrillicInMarkBlock` — ColName + ColDesignation) |
+| Qty sub-row | `FindQtyTextInCell` — только полоса `rowTop` при merged span |
+| Стиль qty | `ResolveQtyTableTextAppearanceForScope(tr, scope, rowTop)` — образец из `ColName` на `rowTop` |
+| Палитра vs scope | `[POSC] Палитра: ключей=N, имён=M` + первые 12 ключей без имени |
+
+---
+
+## 23. Палитра vs scope таблиц (2026-06-14)
+
+- **ЗАПУСТИТЬ** считает марки на всём чертеже → N ключей в палитре (qty).
+- **Выбрать спецификацию** даёт имена только для марок на **выделенных** листах → M имён.
+- Если M < N — это не баг: на выделенных листах нет остальных марок. CMD: `[POSC] Палитра: ключей=…, имён=…` + подсказка выделить все листы.
+- Статус палитры: `имён=M из N ключей`.
 
 ---
 

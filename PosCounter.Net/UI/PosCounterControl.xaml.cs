@@ -440,7 +440,12 @@ namespace PosCounter.Net.UI
             var missingQty = payload.MissingQtyMarks != null && payload.MissingQtyMarks.Count > 0
                 ? $" Нет количества для марок: {string.Join(", ", payload.MissingQtyMarks)}."
                 : string.Empty;
-            SetStatus($"[OK] Спецификация: имён={payload.MarkNames?.Count ?? 0}, Кол. записано={payload.QtyWritten}, пропущено={payload.QtySkipped}.{missingQty}");
+            var namesCount = payload.MarkNames?.Count ?? 0;
+            var paletteCount = payload.PaletteKeyCount > 0 ? payload.PaletteKeyCount : namesCount;
+            var namesGap = paletteCount > namesCount
+                ? $" Имён={namesCount} из {paletteCount} ключей палитры — выделите все листы спецификации."
+                : string.Empty;
+            SetStatus($"[OK] Спецификация: имён={namesCount}, Кол. записано={payload.QtyWritten}, пропущено={payload.QtySkipped}.{missingQty}{namesGap}");
             RefreshGridRows();
         }
 

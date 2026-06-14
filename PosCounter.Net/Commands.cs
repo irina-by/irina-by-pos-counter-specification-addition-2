@@ -272,6 +272,7 @@ namespace PosCounter.Net
                     Success = pick.Success,
                     Error = pick.Error,
                     MarkNames = names,
+                    PaletteKeyCount = qtyByKey?.Count ?? 0,
                     QtyWritten = pick.QtyWritten,
                     QtySkipped = pick.QtySkipped,
                     MissingQtyMarks = pick.MissingQtyMarks ?? new List<int>()
