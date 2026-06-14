@@ -2836,6 +2836,13 @@ namespace PosCounter.Net.SpecGrid
             }
 
             result.HeaderEndRow = lastHeaderRow + 1;
+            var tokenHeaderEnd = result.HeaderEndRow;
+            var hLineBoundary = FindHeaderEndRowByHorizontalBorders(result, result.HorizontalLines);
+            if (hLineBoundary >= 0)
+            {
+                result.HeaderEndRow = Math.Max(result.HeaderEndRow, hLineBoundary);
+            }
+
             var firstDataRow = FindFirstDataRowByGridScan(result);
             if (firstDataRow >= 0)
             {
@@ -2845,6 +2852,14 @@ namespace PosCounter.Net.SpecGrid
             else
             {
                 result.RowDataStart = result.HeaderEndRow;
+            }
+
+            if (hLineBoundary >= 0)
+            {
+                result.RowDataStart = Math.Max(result.RowDataStart, hLineBoundary);
+                SpecGridLog.WriteTrace(
+                    "HEADER-SCAN",
+                    $"scope={result.ScopeIndex} hLineBoundary={hLineBoundary} tokenHeaderEnd={tokenHeaderEnd} headerEndRow={result.HeaderEndRow} rowDataStart={result.RowDataStart}");
             }
 
             SanitizeMarkScoresForDigitOnlyHeaders(result, markScores, log);
@@ -4084,20 +4099,36 @@ namespace PosCounter.Net.SpecGrid
 
             var xL = result.GridXs[0];
             var xR = result.GridXs[result.GridXs.Count - 1];
-            var lastBorderRow = FindHeaderBoundaryRow(result, horiz, xL, xR, MaxHeaderBorderScanRow);
+            var hLineBoundary = FindHeaderEndRowByHorizontalBorders(result, horiz);
             int headerEndRow;
-            if (lastBorderRow >= 0)
+            if (hLineBoundary >= 0)
             {
-                headerEndRow = lastBorderRow;
+                headerEndRow = hLineBoundary;
             }
             else
             {
-                var markRow = FindFirstMarkRowFromCellText(result, minRow: 0);
-                headerEndRow = markRow >= 0 ? markRow : Math.Min(6, rows - 1);
+                var lastBorderRow = FindHeaderBoundaryRow(result, horiz, xL, xR, MaxHeaderBorderScanRow);
+                if (lastBorderRow >= 0)
+                {
+                    headerEndRow = lastBorderRow;
+                }
+                else
+                {
+                    var markRow = FindFirstMarkRowFromCellText(result, minRow: 0);
+                    headerEndRow = markRow >= 0 ? markRow : Math.Min(6, rows - 1);
+                }
             }
 
             result.HeaderEndRow = headerEndRow;
-            log?.Info($"TABLE-GRID: scope={result.ScopeIndex} HeaderEndRow={headerEndRow}");
+            if (hLineBoundary >= 0)
+            {
+                log?.Info(
+                    $"TABLE-GRID: scope={result.ScopeIndex} HeaderEndRow={headerEndRow} (hLineBoundary={hLineBoundary})");
+            }
+            else
+            {
+                log?.Info($"TABLE-GRID: scope={result.ScopeIndex} HeaderEndRow={headerEndRow}");
+            }
         }
 
         private static int FindFirstMarkRowFromCellText(ScopeGridResult result, int minRow)
@@ -4160,6 +4191,49 @@ namespace PosCounter.Net.SpecGrid
             return lastBorderRow;
         }
 
+        /// <summary>Граница шапки/данных: 2-я полноширинная H-линия от верха (bilingual RU+EN шапка).</summary>
+        private static int FindHeaderEndRowByHorizontalBorders(
+            ScopeGridResult result,
+            List<GridLineSeg> horiz)
+        {
+            if (result?.GridXs == null || result.GridXs.Count < 2
+                || result.GridYs == null || result.GridYs.Count < 2
+                || horiz == null || horiz.Count == 0)
+            {
+                return -1;
+            }
+
+            var xL = result.GridXs[0];
+            var xR = result.GridXs[result.GridXs.Count - 1];
+            var rows = result.CellText?.GetLength(0) ?? (result.GridYs.Count - 1);
+            var borders = new List<int>();
+            for (var r = 1; r <= Math.Min(rows - 1, MaxHeaderBorderScanRow); r++)
+            {
+                if (r >= result.GridYs.Count)
+                {
+                    break;
+                }
+
+                var y = result.GridYs[r];
+                if (HasHBorderAt(y, xL, xR, horiz, borderEps: EpsAxis * 3.0))
+                {
+                    borders.Add(r);
+                }
+            }
+
+            if (borders.Count >= 2)
+            {
+                return borders[1];
+            }
+
+            if (borders.Count == 1)
+            {
+                return borders[0];
+            }
+
+            return -1;
+        }
+
         /// <summary>
         /// Строка, с которой начинается поиск данных: HeaderEndRow (grid scan) или H-line под шапкой.
         /// </summary>
@@ -4187,14 +4261,20 @@ namespace PosCounter.Net.SpecGrid
                 return Math.Min(searchFrom, rows - 1);
             }
 
-            var xL = result.GridXs[result.ColMark];
-            var xR = result.GridXs[result.ColMark + 1];
-            const int headerBandMaxRow = 4;
-            var lastBorderRow = FindHeaderBoundaryRow(result, horiz, xL, xR, headerBandMaxRow);
-
-            if (lastBorderRow >= 0)
+            var hLineBoundary = FindHeaderEndRowByHorizontalBorders(result, horiz);
+            if (hLineBoundary >= 0)
             {
-                searchFrom = Math.Max(searchFrom, lastBorderRow);
+                searchFrom = Math.Max(searchFrom, hLineBoundary);
+            }
+            else if (result.GridXs.Count > result.ColMark + 1)
+            {
+                var xL = result.GridXs[result.ColMark];
+                var xR = result.GridXs[result.ColMark + 1];
+                var lastBorderRow = FindHeaderBoundaryRow(result, horiz, xL, xR, MaxHeaderBorderScanRow);
+                if (lastBorderRow >= 0)
+                {
+                    searchFrom = Math.Max(searchFrom, lastBorderRow);
+                }
             }
 
             return Math.Min(searchFrom, rows - 1);
@@ -4262,18 +4342,21 @@ namespace PosCounter.Net.SpecGrid
                 return;
             }
 
-            var firstKeyRow = result.KeyToRowMark.Values.Min();
+            var firstKeyRow = result.KeyToRowTopSub.Count > 0
+                ? result.KeyToRowTopSub.Values.Min()
+                : result.KeyToRowMark.Values.Min();
+            var source = result.KeyToRowTopSub.Count > 0 ? "min KeyToRowTopSub" : "min KeyToRowMark";
             if (firstKeyRow < result.RowDataStart)
             {
                 log?.RowDataDiag(
-                    $"[ROW-DATA] scope={result.ScopeIndex} AlignRowDataStartToFirstMark: {result.RowDataStart} → {firstKeyRow} (min KeyToRowMark)");
-                log.Info($"TABLE-GRID: scope={result.ScopeIndex} RowDataStart {result.RowDataStart} -> {firstKeyRow} (first bound key)");
+                    $"[ROW-DATA] scope={result.ScopeIndex} AlignRowDataStartToFirstMark: {result.RowDataStart} → {firstKeyRow} ({source})");
+                log.Info($"TABLE-GRID: scope={result.ScopeIndex} RowDataStart {result.RowDataStart} -> {firstKeyRow} (first block top)");
                 result.RowDataStart = firstKeyRow;
             }
             else
             {
                 log?.RowDataDiag(
-                    $"[ROW-DATA] scope={result.ScopeIndex} AlignRowDataStartToFirstMark: RowDataStart={result.RowDataStart} firstKeyRow={firstKeyRow} (без сдвига)");
+                    $"[ROW-DATA] scope={result.ScopeIndex} AlignRowDataStartToFirstMark: RowDataStart={result.RowDataStart} firstBlockTop={firstKeyRow} ({source}, без сдвига)");
             }
         }
 
@@ -4517,7 +4600,7 @@ namespace PosCounter.Net.SpecGrid
                 if (SpecDiagPolicy.IsSampleKey(result, kv.Key))
                 {
                     log?.RowDataDiag(
-                        $"[ROW-DATA] scope={result.ScopeIndex} key={kv.Key} rowMark={rowMark} rowTop={rowTop} blockEnd={blockEnd} RowDataStart={result.RowDataStart}");
+                        $"[ROW-DATA] scope={result.ScopeIndex} key={kv.Key} rowMark={rowMark} rowTopRaw={rowTopRaw} rowTop={rowTop} blockEnd={blockEnd} RowDataStart={result.RowDataStart}");
                 }
 
                 log.Debug($"MERGE-BLOCK: key={kv.Key} rowMark={rowMark} rowTop={rowTop} blockEndEx={blockEnd} span={span}");
@@ -4677,7 +4760,7 @@ namespace PosCounter.Net.SpecGrid
             return joined;
         }
 
-        /// <summary>Верхняя строка блока марки: не шапка, не секция без марки.</summary>
+        /// <summary>Верхняя строка блока марки: не шапка; не сдвигать rowTop, если ColName непустой над цифрой в merged ColMark.</summary>
         private static int ResolveNameRowTopForKey(ScopeGridResult grid, int key, int? rawRowTop = null)
         {
             if (!grid.KeyToRowMark.TryGetValue(key, out var rowMark))
@@ -4695,7 +4778,19 @@ namespace PosCounter.Net.SpecGrid
 
             while (rowTop < rowMark && IsSectionHeaderRow(grid, rowTop))
             {
+                if (!string.IsNullOrWhiteSpace(GetTrimmedNameAtRow(grid, rowTop)))
+                {
+                    break;
+                }
+
                 rowTop++;
+            }
+
+            if (SpecDiagPolicy.IsSampleKey(grid, key) && rawRowTop.HasValue && rawRowTop.Value != rowTop)
+            {
+                SpecGridLog.WriteTrace(
+                    "ROW-DATA",
+                    $"scope={grid.ScopeIndex} key={key} rowMark={rowMark} rowTopRaw={rawRowTop.Value} rowTop={rowTop} (section-skip stopped: name above mark)");
             }
 
             return rowTop;
@@ -4724,6 +4819,7 @@ namespace PosCounter.Net.SpecGrid
 
                 if (IsSectionHeaderRow(grid, r) && !IsNameContinuationRow(grid, key, r))
                 {
+                    LogNameSectionRowSkip(grid, key, r, parts.Count);
                     continue;
                 }
 
@@ -5459,9 +5555,14 @@ namespace PosCounter.Net.SpecGrid
                 {
                     if (ShouldLogNameRejectReason(grid, key, parts.Count))
                     {
+                        var rowMarkHint = grid.KeyToRowMark.TryGetValue(key, out var rm) ? rm : -1;
+                        var rowTopHint = ResolveNameRowTopForKey(grid, key);
+                        var blockEndHint = grid.KeyToMarkBlockEnd.TryGetValue(key, out var beHint)
+                            ? beHint
+                            : GetMarkBlockEndExclusive(grid, rowTopHint, key);
                         SpecGridLog.WriteTrace(
                             "NAME",
-                            $"scope={grid.ScopeIndex} key={key} skip=section «{TrimForLog(line, 40)}»");
+                            $"scope={grid.ScopeIndex} key={key} skip=section-line row={row} rowTop={rowTopHint} rowMark={rowMarkHint} blockEnd={blockEndHint} «{TrimForLog(line, 40)}»");
                     }
 
                     log?.Info($"[NAME-SECTION] scope={grid.ScopeIndex} key={key} row={row} line=\"{TrimForLog(line, 40)}\"");
@@ -5554,6 +5655,7 @@ namespace PosCounter.Net.SpecGrid
 
                 if (IsSectionHeaderRow(grid, r) && !IsNameContinuationRow(grid, key, r))
                 {
+                    LogNameSectionRowSkip(grid, key, r, parts.Count);
                     continue;
                 }
 
@@ -5710,6 +5812,7 @@ namespace PosCounter.Net.SpecGrid
 
                 if (textRow >= 0 && IsSectionHeaderRow(grid, textRow) && !IsNameContinuationRow(grid, key, textRow))
                 {
+                    LogNameSectionRowSkip(grid, key, textRow, parts.Count);
                     continue;
                 }
 
@@ -5814,10 +5917,10 @@ namespace PosCounter.Net.SpecGrid
             return true;
         }
 
-        /// <summary>Строка продолжения наименования внутри блока марки (без своей цифры в ColMark).</summary>
+        /// <summary>Строка продолжения наименования внутри блока марки [rowTop, blockEnd) — в т.ч. над цифрой в merged ColMark.</summary>
         private static bool IsNameContinuationRow(ScopeGridResult grid, int key, int row)
         {
-            if (!grid.KeyToRowMark.TryGetValue(key, out var rowMark) || row <= rowMark)
+            if (!grid.KeyToRowMark.TryGetValue(key, out var rowMark))
             {
                 return false;
             }
@@ -5826,7 +5929,23 @@ namespace PosCounter.Net.SpecGrid
             var blockEnd = grid.KeyToMarkBlockEnd.TryGetValue(key, out var be)
                 ? be
                 : GetMarkBlockEndExclusive(grid, rowTop, key);
-            if (row >= blockEnd)
+            if (row < rowTop || row >= blockEnd)
+            {
+                return false;
+            }
+
+            if (row < rowMark)
+            {
+                var rowKeyAbove = ResolveMarkKeyAtRow(grid, row);
+                if (rowKeyAbove > 0 && rowKeyAbove != key)
+                {
+                    return HasNameTextOwnedByKey(grid, key, row, rowTop, blockEnd);
+                }
+
+                return !string.IsNullOrWhiteSpace(GetTrimmedNameAtRow(grid, row));
+            }
+
+            if (row == rowMark)
             {
                 return false;
             }
@@ -5838,6 +5957,31 @@ namespace PosCounter.Net.SpecGrid
             }
 
             return true;
+        }
+
+        private static void LogNameSectionRowSkip(
+            ScopeGridResult grid,
+            int key,
+            int row,
+            int partCount)
+        {
+            if (!SpecDiagPolicy.ShouldTraceName(grid, key, false, partCount, 0))
+            {
+                return;
+            }
+
+            if (!grid.KeyToRowMark.TryGetValue(key, out var rowMark))
+            {
+                return;
+            }
+
+            var rowTop = ResolveNameRowTopForKey(grid, key);
+            var blockEnd = grid.KeyToMarkBlockEnd.TryGetValue(key, out var be)
+                ? be
+                : GetMarkBlockEndExclusive(grid, rowTop, key);
+            SpecGridLog.WriteTrace(
+                "NAME",
+                $"scope={grid.ScopeIndex} key={key} skip=section-row r={row} rowTop={rowTop} rowMark={rowMark} blockEnd={blockEnd}");
         }
 
         private static bool IsSectionHeaderRow(ScopeGridResult grid, int row)

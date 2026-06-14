@@ -272,7 +272,7 @@ rowEndExclusive = max(rowEndExclusive, rowTop + 1), min(..., GridRowCount)
 
 `GetNextKeyRowExclusive` (rowTopSub) используется для ColQty, **не** для склейки имени: при объединённой ячейке «Поз.» rowTopSub следующей марки может совпадать со строкой продолжения предыдущего имени и обрезать диапазон до одной строки.
 
-**Продолжение имени vs секция:** `IsNameContinuationRow(key, row)` — строка внутри `[rowMark, markBlockEnd)` без своей цифры; такие строки **не** пропускаются как `IsSectionHeaderRow` в путях KV/value (`CollectNamePartsFromCellText`, `CollectNamePartsForPositionRange`, `SupplementNamePartsInVerticalBand`, `AllNameRowsHaveCellText`).
+**Продолжение имени vs секция:** `IsNameContinuationRow(key, row)` — строка внутри **`[rowTop, markBlockEnd)`**, включая строки имени **выше** цифры марки в merged-ячейке ColMark (`rowTop ≤ row < rowMark` с непустым ColName) и строки ниже цифры без своей марки; такие строки **не** пропускаются как `IsSectionHeaderRow` в путях KV/value (`CollectNamePartsFromCellText`, `CollectNamePartsForPositionRange`, `SupplementNamePartsInVerticalBand`, `AllNameRowsHaveCellText`).
 
 CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `markBlockEnd`, `rowEndEx`, `cellOnly`.
 
@@ -286,7 +286,11 @@ CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `markBlockEnd`, `rowEndEx`
 | phrase | `CollapseDuplicateNamePhrase` | «A A» → «A» |
 | cell matrix | `IsDuplicateCandidate` | near-overlap (4× eps) один plain в ColName |
 
-`ResolveNameRowTopForKey`: `≥ HeaderEndRow`, `≥ RowDataStart`, не секция без марки (`IsSectionHeaderRow`, порог имени ≥ 8 символов).
+`ResolveNameRowTopForKey`: `≥ HeaderEndRow`, `≥ RowDataStart`; цикл `IsSectionHeaderRow` **не** сдвигает `rowTop`, если в ColName на строке есть непустой текст (имя над цифрой в merged ColMark). Согласовано с `IsNameContinuationRow`.
+
+`AlignRowDataStartToFirstMark`: `RowDataStart = min(KeyToRowTopSub)` (верх первого блока), не `min(KeyToRowMark)`.
+
+`FindHeaderEndRowByHorizontalBorders`: граница шапки/данных = **2-я** полноширинная H-линия от верха таблицы (bilingual RU+EN шапка); fallback — последняя линия / grid scan.
 
 `ResolveNameFromMergeGroup` — алиас на `ResolveNameForKey`.
 
@@ -615,6 +619,29 @@ CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `markBlockEnd`, `rowEndEx`
 | Qty sub-row | `FindQtyTextInCell` — только полоса `rowTop` при merged span |
 | Стиль qty | `ResolveQtyTableTextAppearanceForScope(tr, scope, rowTop)` — образец из `ColName` на `rowTop` |
 | Палитра vs scope | `[POSC] Палитра: ключей=N, имён=M` + первые 12 ключей без имени |
+
+### Первая строка имени над цифрой марки (2026-06-14)
+
+План: `.cursor/plans/fix_first_name_line_skip_cade9350.plan.md`.
+
+| Симптом | Причина | Исправление |
+|---------|---------|-------------|
+| В палитре 2-я и 3-я строки имени, 1-я пропущена | `IsNameContinuationRow` возвращала `false` для `row ≤ rowMark`; первая строка ColName над цифрой в merged ColMark отфильтровывалась как `IsSectionHeaderRow` | Диапазон continuation: **`[rowTop, blockEnd)`**; для `rowTop ≤ row < rowMark` — continuation при непустом ColName |
+
+CMD: `[NAME] skip=section-row r=… rowTop=… rowMark=… blockEnd=…` (только sample keys через `SpecDiagPolicy`).
+
+### rowTop, bilingual шапка, qty (2026-06-14)
+
+План: `fix_rowtop_header_qty_18970ac5.plan.md` (дополнение к fix_first_name_line_skip).
+
+| Симптом | Причина | Исправление |
+|---------|---------|-------------|
+| Первая строка имени пропущена при merged-блоке | `ResolveNameRowTopForKey`: цикл `rowTop++` при `IsSectionHeaderRow` сдвигал `rowTop` до `rowMark` **до** сбора имён | Не сдвигать `rowTop`, если `GetTrimmedNameAtRow` непустой |
+| Первая марка таблицы без 1-й строки имени | `AlignRowDataStartToFirstMark` брал `min(KeyToRowMark)` (цифра), не верх блока | `min(KeyToRowTopSub)` |
+| Bilingual шапка RU+EN: первая строка данных не читается | `FindHeaderBoundaryRow` — последняя линия; узкий `headerBandMaxRow=4` | `FindHeaderEndRowByHorizontalBorders` — **2-я** полноширинная H-линия |
+| Qty не в верхней суб-ячейке при 3+ строках блока | Неверный `KeyToRowTopSub` | Исправление `rowTop` → `WriteQty` использует правильный `rowTop` |
+
+CMD: `[ROW-DATA] rowTopRaw=… rowTop=…`; `[HEADER-SCAN] hLineBoundary=…`; `[WRITEQTY] rowTop=… rowMark=… merged=…`.
 
 ---
 

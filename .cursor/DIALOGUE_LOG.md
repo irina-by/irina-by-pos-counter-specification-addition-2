@@ -278,3 +278,13 @@
 > [2026-06-14] Задача: план fix_names_qty_post-kv — универсальные имена merged-блоков, qty sub-row+стиль, палитра vs scope.
 > Правка: `ResolveNameForKey` — без nextKeyTop cap при isMerged; `HasCyrillicInMarkBlock`/`HasNameTextOwnedByKey`; cellOnly `reason=merged-block|missing-cyrillic`; `FindQtyTextInCell` rowTop only; `ResolveQtyTableTextAppearanceForScope(scope, rowTop)`; `ReportPaletteVsScopeNamesDiagnostic`; убраны `key==1`, `key<=3` diag; docs §23, INSTRUCTION §8.3; план `_IMPLEMENTED.md`.
 > Результат: КОД ГОТОВ — пересборка net452, NETLOAD; проверка: `[NAME] reason=merged-block`, `[WRITEQTY] from=colName-rowTop`, `[POSC] Палитра: ключей=N, имён=M`.
+
+> [2026-06-14] Задача: план fix_first_name_line_skip — первая строка наименования не попадает в палитру (3 строки → берутся 2-я и 3-я).
+> Причина: `IsNameContinuationRow` давала `false` для `row ≤ rowMark`; при цифре марки ниже первой строки имени (merged ColMark) первая строка ColName отсекалась как `IsSectionHeaderRow`.
+> Правка: `IsNameContinuationRow` — диапазон `[rowTop, blockEnd)`; ветка `rowTop ≤ row < rowMark` с непустым ColName; `LogNameSectionRowSkip` + trace `rowTop/rowMark/blockEnd`; docs DEVELOPER §11/§22; план `_IMPLEMENTED.md`.
+> Результат: КОД ГОТОВ — пересборка `build-ac2016.cmd`, NETLOAD; проверка ГТ-20: марки 1/5/6 — все строки имени в палитре, `[NAME] parts=3` для 3-строчных.
+
+> [2026-06-14] Задача: план fix_rowtop_header_qty — rowTop сдвигался до rowMark; bilingual шапка; RowDataStart; qty в merged 3+.
+> Причина: `ResolveNameRowTopForKey` while `rowTop++` при `IsSectionHeaderRow` до сбора имён; `AlignRowDataStartToFirstMark` min(KeyToRowMark); граница шапки — последняя H-линия, не 2-я.
+> Правка: не rowTop++ при непустом ColName; `min(KeyToRowTopSub)`; `FindHeaderEndRowByHorizontalBorders`; `[WRITEQTY] merged=`; docs §11/§22; план `_IMPLEMENTED.md`.
+> Результат: КОД ГОТОВ — пересборка net452, NETLOAD; проверка: merged N-line parts≥N, rowTop<rowMark, qty в верхней суб-ячейке.

@@ -922,8 +922,9 @@ namespace PosCounter.Net.SpecGrid
                         var styleFrom = appearance.Found ? "colName-rowTop" : "fallback";
                         var h = appearance.HasTextHeight ? appearance.TextHeight.ToString("F1", CultureInfo.InvariantCulture) : "?";
                         var layer = appearance.Layer ?? "?";
+                        var mergedSpan = rowBottomEx > rowTop + 1;
                         scope.WriteQtyDiagLines.Add(
-                            $"WriteQty key={key} rowTop={rowTop} rowMark={rowMark} colQty={col} qty={qty} Y={point.Y:F1} style=h={h} layer={layer} from={styleFrom} action=update (палитра)");
+                            $"WriteQty key={key} rowTop={rowTop} rowMark={rowMark} rowBottomEx={rowBottomEx} merged={mergedSpan} colQty={col} qty={qty} Y={point.Y:F1} style=h={h} layer={layer} from={styleFrom} action=update (палитра)");
                     }
                 }
                 catch
