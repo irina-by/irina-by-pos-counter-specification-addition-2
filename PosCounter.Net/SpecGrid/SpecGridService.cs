@@ -12,6 +12,7 @@ using PosCounter.Net.Models;
 
 namespace PosCounter.Net.SpecGrid
 {
+    // POSC-SINGLE-FILE-SVC: SpecGridService — один файл SpecGrid\SpecGridService.cs (~2206 строк). Не вставлять в TableGrid.cs.
     internal sealed class SpecPickResult
     {
         public bool Success;

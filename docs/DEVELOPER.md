@@ -2,7 +2,7 @@
 
 **Версия:** 4.2.0-table-grid-lines  
 **Сборки:** `dll 2016` (net452, .NET 4.5.2+ / AC 2016 SP1–2024), `dll 2026` (net8.0-windows)  
-**Дата актуализации:** 2026-06-13 (diag_log_gt20: unassigned→name, continuation name row end, skip reasons)
+**Дата актуализации:** 2026-06-14 (markAnchor, единый factual plan, очистка .cursor/plans)
 
 ---
 
@@ -642,6 +642,39 @@ CMD: `[NAME] skip=section-row r=… rowTop=… rowMark=… blockEnd=…` (тол
 | Qty не в верхней суб-ячейке при 3+ строках блока | Неверный `KeyToRowTopSub` | Исправление `rowTop` → `WriteQty` использует правильный `rowTop` |
 
 CMD: `[ROW-DATA] rowTopRaw=… rowTop=…`; `[HEADER-SCAN] hLineBoundary=…`; `[WRITEQTY] rowTop=… rowMark=… merged=…`.
+
+### Диагностика `[HEADER-DATA-ROW]` (2026-06-14)
+
+План: `diag_first_row_after_header_78c4959a.plan.md`. **Только логи**, логика сбора не менялась.
+
+| Сообщение | Смысл |
+|-----------|--------|
+| `r=R isData=… hasMark=… hasName=…` | Построчный gridScan: почему строка после шапки не считается «данными» |
+| `hBorders=[…] chosen=… rule=second-line` | Граница шапки по 2-й H-линии |
+| `lastHeaderRow=… tokenEnd=… firstGridData=…` | Итог токенов шапки + gridScan |
+| `searchFrom=… hLineBoundary=… out=…` | Нижняя граница поиска марки в `ComputeRowDataStart` |
+| `minKey=… row[H]=«…» row[H+1]=«…»` | Срез ColName у границы шапки и первого ключа |
+| `rowTop clamped RowDataStart=…` | `rowTop` поднят до `RowDataStart` (sample key) |
+
+Как читать: если `row[H]` содержит первую строку имени, а `RowDataStart=H+1` — строка отсечена на этапе gridScan или `max(hLine, firstGridData)`.
+
+### Якорь шапки по цифре ColMark (2026-06-14)
+
+План: `fix_first_mark_rowdatastart_IMPLEMENTED.md`.
+
+**Правило:** как только в `ColMark` есть номер (`TryParseMarkKey`, не подпись «поз.») — это **выход из шапки**. Без `key==N`, без привязки к листам.
+
+| Метод | Роль |
+|-------|------|
+| `FindFirstMarkRowInColMark` | Минимальный `row` с цифрой в ColMark (пропуск `IsSectionHeaderRow`) |
+| `ApplyMarkAnchoredHeaderBoundary` | `RowDataStart = blockTop` (`FindRowTopSub`); `HeaderEndRow = min(…, blockTop)` |
+| `FindHeaderEndRowByHorizontalBorders` | H-линии только **до** `firstMarkRow - 1`; second-line не между блоками данных |
+| `IsGridScanDataRow` | Марка только ColMark; qty-hint только ColQty (не масса) |
+| `HeaderTokenEndRow` + `ResolveHeaderOnlyEndRow` | Текст шапки до токенов / до первой цифры ColMark |
+
+CMD: `[HEADER-DATA-ROW] markAnchor firstMarkRow=… blockTop=… rule=colMark-digit`; `firstMarkRow=… cap=before-first-mark` у H-линий.
+
+Приоритет: **цифра ColMark** > токены шапки > H-линия (выше firstMarkRow) > gridScan.
 
 ---
 

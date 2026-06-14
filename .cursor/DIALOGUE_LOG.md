@@ -288,3 +288,26 @@
 > Причина: `ResolveNameRowTopForKey` while `rowTop++` при `IsSectionHeaderRow` до сбора имён; `AlignRowDataStartToFirstMark` min(KeyToRowMark); граница шапки — последняя H-линия, не 2-я.
 > Правка: не rowTop++ при непустом ColName; `min(KeyToRowTopSub)`; `FindHeaderEndRowByHorizontalBorders`; `[WRITEQTY] merged=`; docs §11/§22; план `_IMPLEMENTED.md`.
 > Результат: КОД ГОТОВ — пересборка net452, NETLOAD; проверка: merged N-line parts≥N, rowTop<rowMark, qty в верхней суб-ячейке.
+
+> [2026-06-14] Задача: сборка — дубликат SpecGridService / SpecPickResult / QtyTableTextAppearance (CS0101/CS0111).
+> Диагноз: на Yandex один `SpecGridService.cs` (~2206 строк, по 1 классу); ошибка на рабочем ПК — файл вставлен дважды или склеен с TableGrid (как ранее PaletteHost).
+> Правка: маркер `POSC-SINGLE-FILE-SVC` в SpecGridService.cs; `verify-no-duplicate-sources.ps1` проверяет PaletteHost + SpecGridService + вложения в TableGrid; вызов из `build-ac2016.cmd`; СБОРКА_VS_AC2016.md §SpecGridService.
+> Результат: на Yandex [OK]; на рабочем ПК — запустить verify, при [FAIL] чистая перекопировка PosCounter.Net с Yandex.
+
+> [2026-06-14] Задача: повтор ошибки сборки SpecGridService / SpecPickResult дубликат (CS0101).
+> Диагноз: на Yandex один SpecGridService.cs (verify [OK]); на рабочем ПК файл вставлен дважды или второй SpecGridService (1).cs.
+> Правка: MSBuild Target VerifyNoDuplicateSources в csproj; скрипт repair-duplicate-specgrid.ps1; подсказка в verify и СБОРКА_VS_AC2016.md.
+> Результат: на Yandex OK; на ПК сборки: repair → verify → Clean Rebuild; или перекопировать PosCounter.Net с Yandex.
+
+> [2026-06-14] Задача: план diag_first_row_after_header — только CMD-логи, где отсекается 1-я строка после шапки.
+> Правка: `[HEADER-DATA-ROW]` в gridScan, H-линиях, DetectHeader, FindFirstDataRowAfterHeaderBoundary, Rebind итог, rowTop clamp; хелперы `DescribeGridScanRowVerdict`, `LogHeaderDataRowRebindSummary`; docs §22; план `_IMPLEMENTED.md`. Логика сбора **не менялась**.
+> Результат: КОД ГОТОВ — пересборка, NETLOAD; в CMD искать `isData=false` на r=HeaderEndRow и сравнить `row[H]` с RowDataStart.
+
+> [2026-06-14] Задача: план fix_first_mark_rowdatastart — якорь шапки по цифре ColMark (пропуск первой марки в палитре).
+> Причина: `RowDataStart=3` из 2-й H-линии между блоками данных; первая цифра ColMark на row 2 отсечена `IsBindableDataText`; gridScan ложный hasMark от цифры в col массы.
+> Правка: `FindFirstMarkRowInColMark`, `ApplyMarkAnchoredHeaderBoundary` (blockTop, rule=colMark-digit); H-линии cap до firstMarkRow; `IsGridScanDataRow` только ColMark/ColQty; `HeaderTokenEndRow`, `ResolveHeaderOnlyEndRow`; docs §22; план `_IMPLEMENTED.md`. Без key==N.
+> Результат: КОД ГОТОВ — пересборка `build-ac2016.cmd`, NETLOAD; CMD: `markAnchor firstMarkRow=…`, `minKey`=мин. ключ палитры, имён столько же сколько ключей scope.
+
+> [2026-06-14] Задача: актуализировать документацию — единый factual plan, удалить старые планы, обновить README и «Работа программы.md».
+> Правка: переписан `.cursor/plans/factual_program_architecture.plan.md` (markAnchor, SpecColumnSchema, MarkKeyParser, verify/repair, палитра vs scope); удалены 27 файлов из `.cursor/plans/`; обновлены `README.md`, `Работа программы.md`, дата в `docs/DEVELOPER.md`.
+> Результат: ЗАРАБОТАЛО — один актуальный архитектурный документ; история правок остаётся в `.cursor/DIALOGUE_LOG.md` и `docs/DEVELOPER.md`.

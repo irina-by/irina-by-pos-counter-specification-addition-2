@@ -56,7 +56,8 @@
 - Выбор таблицы **рамкой** (можно несколько таблиц подряд; завершение — Enter без выделения).
 - **LINE path:** сетка по LINE (с дополнением осей при линиях на разных слоях).
 - **Native Table:** если в рамке только объект AutoCAD Table без Line — чтение ячеек напрямую.
-- **Шапка:** скан строк сетки сверху вниз → граница данных → scoring столбцов «Поз.» / «Наименование» / «Кол.» (единый алгоритм для всех таблиц).
+- **Шапка:** scoring столбцов «Поз.» / «Наименование» / «Кол.»; граница данных — **первая цифра в «Поз.»** (markAnchor), затем токены шапки, H-линии (до первой марки), grid scan.
+- **Вторая таблица без шапки:** столбцы наследуются от первой (`SpecColumnSchema`); заголовок раздела без цифры в «Поз.» не попадает в палитру.
 - **Ключ (марка):** цифры в столбце «Поз.» — `BindKeysFromProperties`, `Row >= RowDataStart`.
 - **Значение (наименование):** `ResolveNameForKey` — CellText + dual-pass + dedupe MText+MText + owner mark.
 - В палитру — **наименования**; на чертёж пишется только **«Кол.»** (количество из палитры после **ЗАПУСТИТЬ**).
@@ -87,6 +88,8 @@
 
 - `[POSC] Распознана шапка…` — столбцы Марка / Наименование / Кол.
 - `[POSC] Граница шапки/данных: HeaderEndRow=… RowDataStart=…` — первая строка данных
+- `[HEADER-DATA-ROW] markAnchor firstMarkRow=… blockTop=… rule=colMark-digit` — якорь по первой цифре в «Поз.»
+- `[POSC] Палитра: ключей=N, имён=M` — если M < N, не все листы выделены (не баг)
 - `[POSC] KeyToRowMark: 1→row1, …` — привязка марок к строкам сетки
 - `[POSC] Марок в данных по столбцам…` — проверка ColMark
 - `[KV-PAIR] key=… value="…"` — итоговое имя для марки
@@ -106,10 +109,12 @@
 
 | Версия AutoCAD  | Команда                  | Результат                     |
 | --------------- | ------------------------ | ----------------------------- |
-| **2016 – 2024** | `build\build-ac2016.cmd` | `dll 2016\PosCounter.Net.dll` |
-| **2025 – 2026** | `build\build-ac2026.cmd` | `dll 2026\PosCounter.Net.dll` |
+| **2016 – 2024** | `PosCounter.Net\build\build-ac2016.cmd` | `bin\x64\Release\net452\PosCounter.Net.dll` или `dll 2016\` |
+| **2025 – 2026** | `PosCounter.Net\build\build-ac2026.cmd` | `dll 2026\PosCounter.Net.dll` |
 
-Полное описание (командная строка, **Visual Studio**, ошибки): **[docs/BUILD.md](docs/BUILD.md)**
+Перед сборкой скрипт проверяет дубликаты исходников (`verify-no-duplicate-sources.ps1`) — защита от склеенных файлов при копировании с облака.
+
+Полное описание (командная строка, **Visual Studio**, ошибки): **[docs/BUILD.md](docs/BUILD.md)** и **`PosCounter.Net/build/СБОРКА_VS_AC2016.md`**
 
 ---
 
@@ -132,7 +137,9 @@
 | `Commands.cs`                | NETLOAD → авто-палитра; **POSC**                  |
 | `PaletteHost.cs`             | Палитра WPF                                       |
 | `Engine/PosCounterEngine.cs` | Подсчёт выносок (LOCK)                            |
-| `SpecGrid/TableGrid.cs`      | Сетка, шапка, key/value, имена                    |
+| `SpecGrid/TableGrid.cs`      | Сетка, шапка, markAnchor, key/value, имена        |
 | `SpecGrid/SpecGridService.cs`| Выбор таблицы, запись «Кол.»                      |
+| `SpecGrid/MarkKeyParser.cs`  | Единый разбор номера марки                        |
+| `SpecGrid/SpecColumnSchema.cs` | Наследование столбцов между таблицами         |
 | `UI/PosCounterControl.*`     | Интерфейс                                         |
 | `Services/ExportService.cs`  | Экспорт Excel из палитры                          |

@@ -101,4 +101,10 @@
       Condition="'$(DesignTimeBuild)' != 'true' and '$(TargetFramework)' == 'net8.0-windows' and '@(AcMgdIdentity)' != '' and $([MSBuild]::VersionLessThan('%(AcMgdIdentity.Version)', '25.0'))"
       Text="Detected AcMgd.dll version %(AcMgdIdentity.Version) from $(AutoCADSdkDirEffective). This target is net8.0-windows (AutoCAD 2025+). Point AutoCADSdkDir to AutoCAD 2025+ installation." />
   </Target>
+
+  <Target Name="VerifyNoDuplicateSources" BeforeTargets="CoreCompile">
+    <Exec
+      Condition="'$(DesignTimeBuild)' != 'true'"
+      Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)build\verify-no-duplicate-sources.ps1&quot;" />
+  </Target>
 </Project>

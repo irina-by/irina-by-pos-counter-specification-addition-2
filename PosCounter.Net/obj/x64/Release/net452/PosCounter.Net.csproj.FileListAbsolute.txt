@@ -17,3 +17,10 @@ C:\Users\Salnikava.I\Yandex.Disk\TatbelGit\Pos_counter addition — 2\PosCounter
 e:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.dll
 e:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.pdb
 E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.csproj.AssemblyReference.cache
+E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2\PosCounter.Net\obj\x64\Release\net452\UI\PosCounterControl.baml
+E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2\PosCounter.Net\obj\x64\Release\net452\UI\PosCounterControl.g.cs
+E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net_MarkupCompile.cache
+E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.g.resources
+E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.GeneratedMSBuildEditorConfig.editorconfig
+E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.AssemblyInfoInputs.cache
+E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.AssemblyInfo.cs

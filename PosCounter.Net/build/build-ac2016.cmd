@@ -11,6 +11,9 @@ set "PROJ=%ROOT%\PosCounter.Net.csproj"
 set "OUT_DIR=%ROOT%\bin\x64\Release\net452"
 set "DEPLOY_DIR=%ROOT%\dll 2016"
 
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0verify-no-duplicate-sources.ps1"
+if errorlevel 1 exit /b 1
+
 dotnet restore "%PROJ%"
 if errorlevel 1 exit /b 1
 
