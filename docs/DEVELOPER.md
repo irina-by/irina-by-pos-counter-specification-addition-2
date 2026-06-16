@@ -72,14 +72,17 @@ PosCounter.Net/
 | Галочка «Все объекты в модели» | ModelSpace или viewport polygon |
 | Иначе | пустой результат |
 
+**PickFirst на листе (2026-06-14):** `TrySnapshotPickFirstFromPalette` (ExecuteInApplicationContext) + повтор в `POSC2_RUN_INTERNAL`. **Не** вызывать Editor API с WPF-потока (R6025).
+
 ### Ключевые внутренние шаги
 
 - `ProcessEntity` / `ProcessBlockReference` — рекурсия блоков.
-- `ProcessTextValue` → `ExtractPositionNumber` — марка 1..10000, приставки «Поз.» и т.д.
+- `ProcessTextValue` → `IsExactCalloutDigitText` + `CalloutMarkGate` (C1 треугольник, C3 соседний текст; C4 круг не отсекает одиночную позицию в круге).
 - `Accumulator.Increment(layer, text)` — группировка количества.
-- `MTextPlainText.ResolveLayer` — слой объекта / блока.
 
-**Не обрабатывается:** MLeader, proxy СПДС.
+**Не обрабатывается:** MLeader; **ProxyEntity** (СПДС proxy).
+
+**Распознавание (2026-06-15):** код подсчёта и спецификации **совпадает** с эталоном `PosCounter.Net1` — скопированы `PosCounterEngine`, `TableGrid`, `CellIndex`, `MTextPlainText`, `PaletteHost`, `Commands`, `PosCounterControl.xaml.cs`; удалён `CalloutMarkGate`.
 
 ---
 
@@ -415,8 +418,12 @@ CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `markBlockEnd`, `rowEndEx`
 
 | AutoCAD | Framework | Скрипт | Деплой |
 |---------|-----------|--------|--------|
-| 2016 SP1–2024 | net452 (.NET 4.5.2+) | `build\build-ac2016.cmd` (корень репо) или `PosCounter.Net\build\build-ac2016.cmd` (портативно) | `dll 2016\` — **PosCounter.Net.dll** + **System.ValueTuple.dll** |
-| 2025+ | net8.0-windows | `build\build-ac2026.cmd` | `dll 2026\PosCounter.Net.dll` |
+| 2016 SP1–2024 | net452 (.NET 4.5.2+) | Visual Studio: Release \| x64 \| net452 | `bin\x64\Release\net452\` (+ `System.ValueTuple.dll`) |
+| 2025+ | net8.0-windows | Visual Studio: Release \| x64 \| net8.0-windows | `bin\x64\Release\net8.0-windows\` или `dll 2026\` |
+
+**AC 2016:** портативный набор = папка `PosCounter.Net`. Сборка только в **Visual Studio** (Release \| x64 \| net452). Инструкции: `README_СБОРКА_AC2016.txt`.
+
+**AC 2026:** VS Release \| x64 \| net8.0-windows; в `build\AutoCAD.props` корня репо — `AutoCADSdkDirNet8`.
 
 Пути: `build\AutoCAD.props` (из template) или `PosCounter.Net\build\AutoCAD.props`. Подробно: `docs/BUILD.md`.
 
@@ -431,7 +438,7 @@ CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `markBlockEnd`, `rowEndEx`
 | `PosCounter.Net\Directory.Build.props` | Импорт `build\AutoCAD.props` и `build\NuGet.local.props` |
 | `PosCounter.Net\build\AutoCAD.props` | Путь к AC 2016 (`AutoCADSdkDirNet46`) |
 | `PosCounter.Net\build\NuGet.local.props` | Запасной `PkgSystem_ValueTuple` через `$(USERPROFILE)\.nuget\...` |
-| `PosCounter.Net\build\build-ac2016.cmd` | Сборка net452 → копия в `PosCounter.Net\dll 2016\` |
+| `PosCounter.Net\build\СБОРКА_VS_AC2016.md` | Инструкция для Visual Studio |
 | `PosCounter.Net\build\СБОРКА_VS_AC2016.md` | Инструкция для Visual Studio |
 
 Инструкция для инженера: `PosCounter.Net\build\СБОРКА_VS_AC2016.md`.
@@ -546,12 +553,13 @@ CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `markBlockEnd`, `rowEndEx`
 
 ### «Количество не найдено в палитре для марок: …»
 
-`CollectMissingQtyMarksForScope` сравнивает `scope.KeyToRowMark.Keys` с `qtyByKey` из палитры (`TryBuildQtyByKeyFromAllRowsSnapshot` — **все** строки `_lastCountRows`, фильтры палитры не режут qty для записи).
+`CollectMissingQtyMarksForScope` сравнивает `scope.KeyToRowMark.Keys` с `qtyByKey` из палитры (`TryBuildQtyByKeyFromVisibleRows` — **видимые** строки после `PassesFilter`, как в таблице палитры).
 
 | Симптом | Причина | Действие |
 |---------|---------|----------|
 | `WriteQty итог: записано=N, пропущено=0` и список missing | Марка **есть в спецификации**, **нет в подсчёте** | ЗАПУСТИТЬ по зоне с выносками; проверить слой/тип объектов |
 | `пропущено>0` | Геометрия ячейки ColQty / `ColQty=-1` | CMD `ИТОГ` + `[WRITEQTY]` |
+| qty в «Кол.» не совпадает с палитрой | `PaletteHost.TryBuildQtyByKeyForWriteback` → **видимые** строки палитры (`TryBuildQtyByKeyFromVisibleRows`), не `_lastCountRows` |
 
 Это **не сбой WriteQty**, если `пропущено=0`.
 
@@ -703,6 +711,41 @@ CMD: `[HEADER-DATA-ROW] markAnchor firstMarkRow=… blockTop=… rule=colMark-di
 3. Выбрать спецификацию → имена + «Кол.» на DWG.
 4. `_tex_fek`: марки 4/5 (owner), 52 (multi-line), 6–9 (не пусто), mark 64 (без дубля имени).
 5. **Ушко:** `RowDataStart=1`, `KeyToRowMark: 1→row1`, ColQty = «Кол.».
+
+---
+
+## 23. ColMark snap + фильтры выносок (2026-06-14)
+
+План: `.cursor/plans/fix_mark_column_snap_20bf4182_IMPLEMENTED.md`.
+
+### B — qty из видимой палитры
+
+| Модуль | Изменение |
+|--------|-----------|
+| `PaletteHost.TryBuildQtyByKeyForWriteback` | `TryBuildQtyByKeyFromVisibleRows` вместо `_lastCountRows` |
+| `Commands.PosCounterSpecInternal` | CMD `[POSC-DIAG] qty source=visible keys=N sample: …` |
+
+UI-фильтры палитры (`PassesFilter`: Марка/Наименование/Количество/Слой) **не менялись** — влияют на видимые строки и на запись «Кол.».
+
+### C — фильтры выносок (ЗАПУСТИТЬ)
+
+| Фильтр | Модуль | Правило |
+|--------|--------|---------|
+| C2 | `MTextPlainText.IsExactCalloutDigitText` | Только голая цифра; без снятия `Поз.`; **во всех режимах** |
+| C1/C3/C4 | `CalloutMarkGate.cs` | Треугольник LINE, круг, соседний не-цифровой текст; **слой не проверяется** |
+| Viewport | `TrySelectInViewportPolygon` | Фильтр расширен: `LINE,CIRCLE` для геометрии |
+
+Gate: `CalloutMarkGate.ShouldCountAsCalloutMark` перед `acc.Increment` в `PosCounterEngine.ProcessTextValue`.
+
+### A — ColMark snap (спецификация)
+
+| Модуль | Изменение |
+|--------|-----------|
+| `TableGridBuilder.SnapExactDigitMarksToColMark` | После `AssignCellsData`; `snapEps = max(CellIndexEps, 25% ширины ColMark)`; X по `XMin`/`XMax`/`AlignX` |
+| `FindFirstMarkRowFromAllTexts` | `IsExactDigitMark`, `DominantRow`, расширенная X-полоса |
+| `CellIndex.GetCellText` | `preferMarkColumn`: без designation (ОСТ/ГОСТ), приоритет exact-digit |
+| `MTextPlainText.LooksLikeDesignationText` | ОСТ/OST + существующие ГОСТ/TB |
+| `TextSample` | поля `XMin`, `XMax` |
 
 ---
 

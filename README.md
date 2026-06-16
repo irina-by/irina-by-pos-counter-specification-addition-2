@@ -60,7 +60,7 @@
 - **Вторая таблица без шапки:** столбцы наследуются от первой (`SpecColumnSchema`); заголовок раздела без цифры в «Поз.» не попадает в палитру.
 - **Ключ (марка):** цифры в столбце «Поз.» — `BindKeysFromProperties`, `Row >= RowDataStart`.
 - **Значение (наименование):** `ResolveNameForKey` — CellText + dual-pass + dedupe MText+MText + owner mark.
-- В палитру — **наименования**; на чертёж пишется только **«Кол.»** (количество из палитры после **ЗАПУСТИТЬ**).
+- В палитру — **наименования**; на чертёж пишется только **«Кол.»** — **количество из видимых строк палитры** (то, что вы видите в таблице после фильтров, не скрытые строки).
 - Высота и стиль «Кол.» берутся из текста таблицы, не фиксированная 250.
 - Примечания инженера в ячейке «Кол.» **не удаляются**.
 
@@ -70,7 +70,7 @@
 
 ## Палитра
 
-**Верх:** ЗАПУСТИТЬ · Выбрать спецификацию · Сброс · галочка «Все объекты в модели»
+**Верх:** ЗАПУСТИТЬ · Выбрать спецификацию · **Сброс** (очищает палитру; цифры на чертеже не стирает) · галочка «Все объекты в модели»
 
 **Фильтры:** Марка, Наименование, Количество, Слой (скрывают строки, не пересчитывают подсчёт)
 
@@ -102,19 +102,21 @@
 
 ## Сборка DLL (кратко)
 
-1. Скопировать `build\AutoCAD.props.template` → `build\AutoCAD.props`
-2. В props указать путь к папке AutoCAD, например:
-   - для **2016**: `AutoCADSdkDirNet46=C:\Program Files\Autodesk\AutoCAD 2016\`
-3. Запустить скрипт:
+Сборка **вручную в Visual Studio** (скрипты `.cmd` удалены).
 
-| Версия AutoCAD  | Команда                  | Результат                     |
-| --------------- | ------------------------ | ----------------------------- |
-| **2016 – 2024** | `PosCounter.Net\build\build-ac2016.cmd` | `bin\x64\Release\net452\PosCounter.Net.dll` или `dll 2016\` |
-| **2025 – 2026** | `PosCounter.Net\build\build-ac2026.cmd` | `dll 2026\PosCounter.Net.dll` |
+1. Откройте `PosCounter.Net\PosCounter.Net.csproj`.
+2. Проверьте путь к AutoCAD в `PosCounter.Net\build\AutoCAD.props` (`AutoCADSdkDirNet46` для AC 2016).
+3. **Проект** → восстановить NuGet → **Release | x64 | net452** (AC 2016–2024) или **net8.0-windows** (AC 2025–2026).
+4. Результат: `bin\x64\Release\net452\` (+ `System.ValueTuple.dll` для AC 2016).
 
-Перед сборкой скрипт проверяет дубликаты исходников (`verify-no-duplicate-sources.ps1`) — защита от склеенных файлов при копировании с облака.
+| Версия AutoCAD | Framework | Выход |
+| --------------- | --------- | ----- |
+| **2016 – 2024** | net452 | `PosCounter.Net.dll` + `System.ValueTuple.dll` |
+| **2025 – 2026** | net8.0-windows | `dll 2026\PosCounter.Net.dll` |
 
-Полное описание (командная строка, **Visual Studio**, ошибки): **[docs/BUILD.md](docs/BUILD.md)** и **`PosCounter.Net/build/СБОРКА_VS_AC2016.md`**
+Подробно: **[docs/BUILD.md](docs/BUILD.md)** и **`PosCounter.Net/build/СБОРКА_VS_AC2016.md`**
+
+Перед сборкой можно запустить `build\verify-no-duplicate-sources.ps1` — защита от склеенных файлов при копировании с облака.
 
 ---
 
@@ -127,16 +129,16 @@
 | [docs/DEVELOPER.md](docs/DEVELOPER.md) | разработчик | методы, условия, красные зоны |
 | [docs/BUILD.md](docs/BUILD.md) | разработчик | сборка DLL |
 | [.cursor/plans/factual_program_architecture.plan.md](.cursor/plans/factual_program_architecture.plan.md) | разработчик | фактический конвейер от NETLOAD до «Кол.» |
+| [.cursor/plans/diff_vs_PosCounter.Net1.md](.cursor/plans/diff_vs_PosCounter.Net1.md) | все | **что изменилось** vs старая сборка PosCounter.Net1 |
 
 ### Основные файлы
 
 | Файл                         | Назначение                                        |
 | ---------------------------- | ------------------------------------------------- |
-| `build/AutoCAD.props`        | Пути к установленному AutoCAD (создаёте локально) |
-| `build/build-ac2016.cmd`     | Сборка для AC 2016                                |
+| `build/AutoCAD.props`        | Путь к AutoCAD 2016 (`AutoCADSdkDirNet46`)        |
 | `Commands.cs`                | NETLOAD → авто-палитра; **POSC**                  |
-| `PaletteHost.cs`             | Палитра WPF                                       |
-| `Engine/PosCounterEngine.cs` | Подсчёт выносок (LOCK)                            |
+| `PaletteHost.cs`             | Палитра; **qty для «Кол.» из видимых строк**      |
+| `Engine/PosCounterEngine.cs` | Подсчёт выносок (= PosCounter.Net1)                |
 | `SpecGrid/TableGrid.cs`      | Сетка, шапка, markAnchor, key/value, имена        |
 | `SpecGrid/SpecGridService.cs`| Выбор таблицы, запись «Кол.»                      |
 | `SpecGrid/MarkKeyParser.cs`  | Единый разбор номера марки                        |

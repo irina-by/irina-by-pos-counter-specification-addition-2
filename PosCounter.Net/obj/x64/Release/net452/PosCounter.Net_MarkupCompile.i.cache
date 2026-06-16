@@ -4,7 +4,7 @@
 library
 C#
 .cs
-C:\Users\Salnikava.I\Yandex.Disk\TatbelGit\Pos_counter addition — 2\PosCounter.Net\obj\x64\Release\net452\
+C:\Project\PosCounter.Net\obj\x64\Release\net452\
 PosCounter.Net
 none
 false
@@ -12,8 +12,8 @@ TRACE;RELEASE;NETFRAMEWORK;NET452;NET30_OR_GREATER;NET35_OR_GREATER;NET40_OR_GRE
 
 12042530445
 
-191528315743
-78-1139180995
+21121189052
+78860567576
 UI\PosCounterControl.xaml;
 
 False

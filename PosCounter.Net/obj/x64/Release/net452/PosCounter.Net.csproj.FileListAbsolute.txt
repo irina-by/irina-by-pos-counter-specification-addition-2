@@ -24,3 +24,18 @@ E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2\PosCounter.Ne
 E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.GeneratedMSBuildEditorConfig.editorconfig
 E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.AssemblyInfoInputs.cache
 E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.AssemblyInfo.cs
+C:\Project\PosCounter.Net\bin\x64\Release\net452\PosCounter.Net.dll
+C:\Project\PosCounter.Net\bin\x64\Release\net452\PosCounter.Net.pdb
+C:\Project\PosCounter.Net\bin\x64\Release\net452\System.ValueTuple.dll
+C:\Project\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.csproj.AssemblyReference.cache
+C:\Project\PosCounter.Net\obj\x64\Release\net452\UI\PosCounterControl.baml
+C:\Project\PosCounter.Net\obj\x64\Release\net452\UI\PosCounterControl.g.cs
+C:\Project\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net_MarkupCompile.cache
+C:\Project\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.g.resources
+C:\Project\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.GeneratedMSBuildEditorConfig.editorconfig
+C:\Project\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.AssemblyInfoInputs.cache
+C:\Project\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.AssemblyInfo.cs
+C:\Project\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.csproj.CoreCompileInputs.cache
+C:\Project\PosCounter.Net\obj\x64\Release\net452\PosCount.C88AD34B.Up2Date
+C:\Project\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.dll
+C:\Project\PosCounter.Net\obj\x64\Release\net452\PosCounter.Net.pdb

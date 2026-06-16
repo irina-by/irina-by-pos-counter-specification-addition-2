@@ -308,6 +308,56 @@
 > Правка: `FindFirstMarkRowInColMark`, `ApplyMarkAnchoredHeaderBoundary` (blockTop, rule=colMark-digit); H-линии cap до firstMarkRow; `IsGridScanDataRow` только ColMark/ColQty; `HeaderTokenEndRow`, `ResolveHeaderOnlyEndRow`; docs §22; план `_IMPLEMENTED.md`. Без key==N.
 > Результат: КОД ГОТОВ — пересборка `build-ac2016.cmd`, NETLOAD; CMD: `markAnchor firstMarkRow=…`, `minKey`=мин. ключ палитры, имён столько же сколько ключей scope.
 
+> [2026-06-14] Задача: ошибки сборки после fix_mark_column_snap (switch AttributeReference, Matrix3d.Column0, ProcessBlockDefinition wcsXform).
+> Правка: `CalloutMarkGate` — `AttributeReference` перед `DBText`; масштаб круга через `MatrixUniformScale`; `PosCounterEngine` — `wcsXform` в вызове `ProcessBlockDefinition`; убран недостижимый `case BlockReference` в `ProcessEntityInBlock`.
+> Результат: ожидает пересборку build-ac2016.cmd.
+
+> Правка: `PaletteHost` → `TryBuildQtyByKeyFromVisibleRows`; `CalloutMarkGate.cs` (C2 exact-digit, C1 треугольник, C4 круг, C3 соседний текст); `SnapExactDigitMarksToColMark`, `FindFirstMarkRowFromAllTexts`, `LooksLikeDesignationText` ОСТ; `CellIndex` prefer exact-digit; docs §20/§23, INSTRUCTION §4.
+> Результат: КОД ГОТОВ — пересборка `build-ac2016.cmd`, NETLOAD; ручная проверка в AutoCAD по чеклисту плана.
+
 > [2026-06-14] Задача: актуализировать документацию — единый factual plan, удалить старые планы, обновить README и «Работа программы.md».
 > Правка: переписан `.cursor/plans/factual_program_architecture.plan.md` (markAnchor, SpecColumnSchema, MarkKeyParser, verify/repair, палитра vs scope); удалены 27 файлов из `.cursor/plans/`; обновлены `README.md`, `Работа программы.md`, дата в `docs/DEVELOPER.md`.
 > Результат: ЗАРАБОТАЛО — один актуальный архитектурный документ; история правок остаётся в `.cursor/DIALOGUE_LOG.md` и `docs/DEVELOPER.md`.
+
+> [2026-06-14] Задача: сборка fix_layout_selection — CS0104 Exception неоднозначна (Runtime vs System).
+> Правка: `Commands.cs` → `catch (System.Exception ex)`.
+> Результат: ожидает пересборку build-ac2016.cmd.
+
+> [2026-06-14] Задача: R6025 pure virtual function call при ЗАПУСТИТЬ (AC 2016).
+> Причина: `SelectImplied` с WPF-потока (`PreviewMouseDown`); `Dispose` копий после `ProxyEntity.Explode`.
+> Правка: убран `PreviewMouseDown`; `TrySnapshotPickFirstFromPalette` через `ExecuteInApplicationContext`; Explode без Dispose копий.
+> Результат: ожидает пересборку и проверку NETLOAD.
+
+> [2026-06-15] Задача: собрать DLL для AutoCAD 2026 (net8.0-windows).
+> Проблемы: restore без `AutoCADSdkDirNet8` в `PosCounter.Net\build\AutoCAD.props`; CS0104 `Timer` (Forms vs Threading) в `PaletteHost`; неверный путь OUT в `build-ac2026.cmd` (`bin\x64\Release\…`).
+> Правка: `AutoCADSdkDirNet8` в props; `System.Windows.Forms.Timer`; restore в скрипте; OUT → `bin\x64\Release\net8.0-windows\`.
+> Результат: ЗАРАБОТАЛО — `dll 2026\PosCounter.Net.dll` (310 KB), сборка 0 ошибок.
+
+> [2026-06-15] Задача: оставить dll 2026, подготовить проект к ручной сборке AC 2016 (как PosCounter.Net1).
+> Правка: `build-ac2016.cmd` (корень + портативный) — verify, telemetry, `-p:Platform=x64`; `СБОРКА_РУЧНАЯ_AC2016.md`; `dll 2026\` не менялась.
+> Результат: КОД ГОТОВ — инженер копирует `PosCounter.Net` на ПК с AC 2016, Release|x64|net452, NETLOAD + ValueTuple рядом.
+
+> [2026-06-15] Задача: убрать ProxyEntityHelper — как в PosCounter.Net1, без Explode proxy СПДС.
+> Правка: удалён `ProxyEntityHelper.cs`; откат в `PosCounterEngine`, `CalloutMarkGate`, `TableGrid`; пересобран `dll 2026\`; docs DEVELOPER, Работа программы.
+> Результат: ЗАРАБОТАЛО — сборка net8.0-windows 0 ошибок; proxy в выделении снова игнорируется.
+
+> [2026-06-15] Задача: подготовить портативный проект для сборки AC 2016 как PosCounter.Net1.
+> Правка: `PosCounter.Net\build\AutoCAD.props` — только Net46; restore `-f net452`; `README_СБОРКА_AC2016.txt`, `КОПИРОВАТЬ_КАК_PosCounter.Net1.md`.
+> Результат: КОД ГОТОВ — копировать папку `PosCounter.Net` на ПК с AC 2016, `build-ac2016.cmd` или VS net452.
+
+> [2026-06-15] Задача: распознавание чертежа точь-в-точь как PosCounter.Net1.
+> Правка: из `C:\Users\user\Desktop\1\PosCounter.Net1` скопированы PosCounterEngine, TableGrid, CellIndex, MTextPlainText, PaletteHost, Commands, PosCounterControl.xaml.cs; удалён CalloutMarkGate.cs (фильтры выносок C1–C4, geoIndex, PickFirst snapshot, StatusHint proxy — убраны).
+> Результат: ЗАРАБОТАЛО — хеши файлов = эталон; net8.0-windows пересобран в dll 2026; net452 — на ПК с AC 2016.
+
+> [2026-06-15] Задача: сборка только вручную (VS) — удалить скрипты .cmd.
+> Правка: удалены `build-ac2016.cmd`, `build-ac2026.cmd`; обновлены README, СБОРКА_РУЧНАЯ, DEVELOPER, INSTRUCTION_ENGINEER.
+> Результат: ЗАРАБОТАЛО.
+
+> [2026-06-15] Задача: в «Кол.» писались не те qty (не из палитры, сброс не помогал).
+> Причина: `TryBuildQtyByKeyForWriteback` брал `_lastCountRows` (все строки), а не видимые в палитре.
+> Правка: `PaletteHost` → `TryBuildQtyByKeyFromVisibleRows` (только то, что видно в палитре после фильтров).
+> Результат: КОД ГОТОВ — пересборка, проверка WriteQty в CMD.
+
+> [2026-06-15] Задача: документация — сравнение с PosCounter.Net1, обновить factual plan, README, Работа программы.
+> Правка: `diff_vs_PosCounter.Net1.md`; обновлены factual_program_architecture, README, Работа программы (Сброс, qty видимые, сборка VS).
+> Результат: ЗАРАБОТАЛО.
