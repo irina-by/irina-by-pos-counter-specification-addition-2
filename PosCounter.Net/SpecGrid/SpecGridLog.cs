@@ -1,3 +1,6 @@
+using System;
+using System.Globalization;
+using System.Reflection;
 using Autodesk.AutoCAD.ApplicationServices;
 
 namespace PosCounter.Net.SpecGrid
@@ -9,7 +12,10 @@ namespace PosCounter.Net.SpecGrid
     internal sealed class SpecGridLog
     {
         private const int DefaultDiagBudget = 55;
+        private const int DefaultMergeBoundaryBudget = 25;
         private static int _diagRemaining;
+        private static int _mergeBoundaryRemaining;
+        private static Document _diagDocument;
 
         /// <summary>Раньше включало [ROW-DATA] в CMD — отключено.</summary>
         public void SetCommandLineDocument(Document doc)
@@ -65,7 +71,63 @@ namespace PosCounter.Net.SpecGrid
         /// <summary>Сброс лимита [POSC-DIAG] на одну операцию «Выбрать спецификацию».</summary>
         public static void ResetDiagSession(Document doc, int maxLines = DefaultDiagBudget)
         {
+            _diagDocument = doc;
             _diagRemaining = maxLines > 0 ? maxLines : DefaultDiagBudget;
+            ResetMergeBoundaryBudget();
+        }
+
+        /// <summary>Лимит строк [POSC] про границы merge-марок на одну операцию «Выбрать спецификацию».</summary>
+        public static void ResetMergeBoundaryBudget(int maxLines = DefaultMergeBoundaryBudget)
+        {
+            _mergeBoundaryRemaining = maxLines > 0 ? maxLines : DefaultMergeBoundaryBudget;
+        }
+
+        /// <summary>Краткая диагностика границ марки в CMD ([POSC]). false — бюджет исчерпан.</summary>
+        public static bool TryWriteMergeBoundaryLine(Document doc, string message)
+        {
+            if (doc == null || string.IsNullOrWhiteSpace(message) || _mergeBoundaryRemaining <= 0)
+            {
+                return false;
+            }
+
+            _mergeBoundaryRemaining--;
+            WriteCommandLine(doc, "[POSC] " + message.Trim());
+            return true;
+        }
+
+        public static int MergeBoundaryLinesRemaining => _mergeBoundaryRemaining;
+
+        /// <summary>Метка DLL для диагностики спецификации.</summary>
+        public static string FormatDllBuildStamp()
+        {
+#if NET8_0
+            const string targetLabel = "net8.0-windows";
+#else
+            const string targetLabel = "net452";
+#endif
+            var asm = Assembly.GetExecutingAssembly();
+            var info = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                ?? asm.GetName().Version?.ToString()
+                ?? "?";
+            return $"DLL {targetLabel} v{info} build={TryGetAssemblyBuildStamp(asm)}";
+        }
+
+        private static string TryGetAssemblyBuildStamp(Assembly asm)
+        {
+            try
+            {
+                var path = asm?.Location;
+                if (!string.IsNullOrWhiteSpace(path) && System.IO.File.Exists(path))
+                {
+                    return System.IO.File.GetLastWriteTime(path).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+
+            return "?";
         }
 
         /// <summary>Разработческая диагностика [POSC-DIAG] — отключена.</summary>
@@ -80,6 +142,23 @@ namespace PosCounter.Net.SpecGrid
             _diagRemaining--;
             WriteCommandLine(doc, "[POSC-DIAG] " + message.Trim());
             */
+        }
+
+        /// <summary>Трассировка методов — маршрут в WriteDiag (сейчас отключена).</summary>
+        public static void WriteTrace(string category, string message)
+        {
+            if (string.IsNullOrWhiteSpace(category) || string.IsNullOrWhiteSpace(message))
+            {
+                return;
+            }
+
+            var doc = _diagDocument;
+            if (doc == null)
+            {
+                return;
+            }
+
+            WriteDiag(doc, $"[{category}] {message.Trim()}");
         }
 
         /// <summary>Краткий итог для инженера — префикс [POSC].</summary>
@@ -112,12 +191,12 @@ namespace PosCounter.Net.SpecGrid
             }
 
             var m = message.Trim();
-            if (m.StartsWith("WriteQty итог:", System.StringComparison.OrdinalIgnoreCase))
+            if (m.StartsWith("WriteQty итог:", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
 
-            if (m.IndexOf("WriteQty пропущен", System.StringComparison.OrdinalIgnoreCase) >= 0)
+            if (m.IndexOf("WriteQty пропущен", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 return true;
             }

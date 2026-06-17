@@ -10,11 +10,13 @@ namespace PosCounter.Net.SpecGrid
         private const int MaxNameTracesPerScope = 12;
         private const int MaxMarkTracesPerScope = 8;
         private const int MaxGeoTracesPerScope = 10;
+        private const int MaxMergeBoundaryDetailPerScope = 12;
         private const int MaxSampleKeys = 6;
 
         private static readonly Dictionary<int, int> NameTraceCount = new Dictionary<int, int>();
         private static readonly Dictionary<int, int> MarkTraceCount = new Dictionary<int, int>();
         private static readonly Dictionary<int, int> GeoTraceCount = new Dictionary<int, int>();
+        private static readonly Dictionary<int, int> MergeBoundaryDetailCount = new Dictionary<int, int>();
         private static HashSet<int> _emptyNameKeys = new HashSet<int>();
         private static HashSet<int> _missingQtyKeys = new HashSet<int>();
 
@@ -23,8 +25,58 @@ namespace PosCounter.Net.SpecGrid
             NameTraceCount.Clear();
             MarkTraceCount.Clear();
             GeoTraceCount.Clear();
+            MergeBoundaryDetailCount.Clear();
             _emptyNameKeys = new HashSet<int>();
             _missingQtyKeys = new HashSet<int>();
+        }
+
+        /// <summary>Нужна ли строка сводки по границе merge для марки key.</summary>
+        public static bool ShouldTraceMergeBoundarySummary(
+            ScopeGridResult scope,
+            int key,
+            int span,
+            bool hasBleed,
+            bool suspectGap)
+        {
+            if (scope == null || key < 1)
+            {
+                return false;
+            }
+
+            if (hasBleed || suspectGap)
+            {
+                return true;
+            }
+
+            if (span >= 4)
+            {
+                return true;
+            }
+
+            return IsSampleKey(scope, key);
+        }
+
+        /// <summary>Построчный срез ColName при bleed — лимит на scope.</summary>
+        public static bool ShouldTraceMergeBoundaryRowDetail(ScopeGridResult scope)
+        {
+            if (scope == null)
+            {
+                return false;
+            }
+
+            var scopeIdx = scope.ScopeIndex;
+            if (!MergeBoundaryDetailCount.TryGetValue(scopeIdx, out var count))
+            {
+                count = 0;
+            }
+
+            if (count >= MaxMergeBoundaryDetailPerScope)
+            {
+                return false;
+            }
+
+            MergeBoundaryDetailCount[scopeIdx] = count + 1;
+            return true;
         }
 
         public static void RegisterEmptyNameKeys(IEnumerable<int> keys)

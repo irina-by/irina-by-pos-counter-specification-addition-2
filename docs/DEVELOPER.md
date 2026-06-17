@@ -288,7 +288,25 @@ rowEndExclusive = max(rowEndExclusive, rowTop + 1), min(..., GridRowCount)
 
 **Продолжение имени vs секция:** `IsNameContinuationRow(key, row)` — строка внутри **`[rowTop, markBlockEnd)`**, включая строки имени **выше** цифры марки в merged-ячейке ColMark (`rowTop ≤ row < rowMark` с непустым ColName) и строки ниже цифры без своей марки; такие строки **не** пропускаются как `IsSectionHeaderRow` в путях KV/value (`CollectNamePartsFromCellText`, `CollectNamePartsForPositionRange`, `SupplementNamePartsInVerticalBand`, `AllNameRowsHaveCellText`).
 
-CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `markBlockEnd`, `rowEndEx`, `cellOnly`.
+CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `markBlockEnd`, `rowEndEx`, `cellOnly` (внутренний log — в CMD **не выводится**).
+
+### Диагностика границ merge в CMD (2026-06-17)
+
+**Состояние (2026-06-17):** `TableGrid.cs` восстановлен из коммита **`24322f2`** (идентичен Desktop `Pos_counter addition — 2`). В `TableGrid` **нет** `ReportMergeBoundaryDiagnostic`; инфраструктура в `SpecGridLog` / `SpecDiagPolicy` сохранена для этапа 2.
+
+План: `plans/fix_merge_mark_boundary.md`. Метод (когда вернётся в `TableGrid`): `ReportMergeBoundaryDiagnostic` → `ReportMarkNamesDiagnostic` после `FillMarkNamesFromMergeGroups`.
+
+| Сообщение CMD | Смысл |
+|---------------|--------|
+| `Табл.N марка K: имя строки A..B (span=S) \| цифра r=… \| верх=… \| конец=… \| след.: верх=… цифра=…` | Диапазон сбора имени; `верх` = `KeyToRowTopSub`; `конец` = `rowEndEx`; `след.верх` = верх merge **следующей** марки |
+| `merge digit→top r=X→Y` | `FindRowTopSub`: цифра в строке X, верх блока Y |
+| `ВНИМАНИЕ марка K: захвачено N лишн. строк (A..B) — имя марки M до её цифры` | **Bleed**: имя следующей марки попало в предыдущую (`rowEndEx > nextKeyTop`) |
+| `r=R colName=«…» markCol=… → …` | Построчный срез ColName в зоне bleed |
+| `Табл.N границы: марок=… предупреждений=…` | Итог; `длинное имя` — подозрение на склейку |
+
+Лимит: `SpecGridLog.TryWriteMergeBoundaryLine` — **25 строк** на операцию «Выбрать спецификацию». Политика: `SpecDiagPolicy.ShouldTraceMergeBoundarySummary` (bleed, span≥4, sample keys).
+
+**Как читать:** если `конец > след.верх` и есть `ВНИМАНИЕ` — нужен этап 2 (`ResolveNextMarkBoundaryExclusive`).
 
 **Dedupe (MText+MText):**
 

@@ -425,3 +425,17 @@
 > Причина: `TryFillQtyAppearanceFromNameColumn` (§19.19) не вызывался; цвет брался из ColQty/пометки; в rowTop нет ColName (merged-блок).
 > Правка: `ResolveQtyTableTextAppearanceForScope` — `CellHasEngineerAnnotationInColQty`, без qty-digit samples при пометке; `SampleSource` + цвет prefer Name; `TryFillQtyAppearanceFromNameColumn` — row band, MText, всегда override EntityColor; docs DEVELOPER §14.
 > Результат: КОД ГОТОВ — пересборка NETLOAD; проверка: qty зелёная как соседняя, пометка не тронута.
+
+> [2026-06-17] Задача: этап 1 плана fix_merge_mark_boundary — диагностика границ merge-марок в CMD.
+> Правка: `SpecGridLog.TryWriteMergeBoundaryLine` (бюджет 25); `SpecDiagPolicy.ShouldTraceMergeBoundarySummary/RowDetail`; `TableGrid.ReportMergeBoundaryDiagnostic` — сводка rowTop/rowEndEx/nextKeyTop/nextMarkRow, `ВНИМАНИЕ` при bleed, срез ColName, итог по таблице; docs DEVELOPER §11.
+> Результат: СБОРКА — на машине агента нет AcMgd; линтер OK; ручной тест — NETLOAD + «Выбрать спецификацию» на 028_МВ_AR-rev2, ожидает инженера (ищем `[POSC] ВНИМАНИЕ марка …`).
+
+> [2026-06-17] Задача: ошибки сборки — отсутствуют TryLockColumnSchema, FormatDllBuildStamp и др.
+> Причина: в коммите 77a17c4 из `TableGrid.cs` выпал большой блок (~2000 строк) со schema/ColQty/layout, а `SpecGridService.cs` остался с вызовами.
+> Правка: восстановлен `TableGrid.cs` из f285c24 + поверх снова `ReportMergeBoundaryDiagnostic`; в `SpecGridLog` добавлены `FormatDllBuildStamp`, `WriteTrace`, сохранён `TryWriteMergeBoundaryLine`.
+> Результат: ошибки CS устранены (остаётся только AcMgd на машине без AutoCAD); пересборка на ПК инженера.
+
+> [2026-06-17] Задача: заменить TableGrid на лучшую версию (24322f2 / Desktop).
+> Причина: f285c24 старее на ~526 строк; Desktop и 24322f2 — один файл (хеш a9d62a8a), финальный релиз AC 2016.
+> Правка: `git checkout 24322f2 -- PosCounter.Net/SpecGrid/TableGrid.cs`; docs DEVELOPER §11 — отметка о состоянии.
+> Результат: КОД ГОТОВ — 6465 строк, `TryLockColumnSchema` на месте; `ReportMergeBoundaryDiagnostic` убран из TableGrid (логи merge — этап 2); пересборка `build-ac2016.cmd` на ПК инженера.

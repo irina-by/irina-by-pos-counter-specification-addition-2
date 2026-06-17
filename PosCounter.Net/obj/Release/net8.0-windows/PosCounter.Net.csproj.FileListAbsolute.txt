@@ -85,3 +85,6 @@ E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2026\PosCounter
 E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2026\PosCounter.Net\obj\Release\net8.0-windows\PosCounter.Net.csproj.CoreCompileInputs.cache
 E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2026\PosCounter.Net\obj\Release\net8.0-windows\PosCounter.Net.sourcelink.json
 E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2026\PosCounter.Net\obj\Release\net8.0-windows\ref\PosCounter.Net.dll
+E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2016\PosCounter.Net\obj\Release\net8.0-windows\PosCounter.Net.dll
+E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2016\PosCounter.Net\obj\Release\net8.0-windows\refint\PosCounter.Net.dll
+E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2016\PosCounter.Net\obj\Release\net8.0-windows\PosCounter.Net.pdb

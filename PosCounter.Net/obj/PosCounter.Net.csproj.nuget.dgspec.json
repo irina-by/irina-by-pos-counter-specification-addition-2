@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "E:\\Yandex.Disk-ananchenkoiren\\TatbelGit\\Pos_counter addition — 2026\\PosCounter.Net\\PosCounter.Net.csproj": {}
+    "E:\\Yandex.Disk-ananchenkoiren\\TatbelGit\\Pos_counter addition — 2016\\PosCounter.Net\\PosCounter.Net.csproj": {}
   },
   "projects": {
-    "E:\\Yandex.Disk-ananchenkoiren\\TatbelGit\\Pos_counter addition — 2026\\PosCounter.Net\\PosCounter.Net.csproj": {
+    "E:\\Yandex.Disk-ananchenkoiren\\TatbelGit\\Pos_counter addition — 2016\\PosCounter.Net\\PosCounter.Net.csproj": {
       "version": "4.2.0",
       "restore": {
-        "projectUniqueName": "E:\\Yandex.Disk-ananchenkoiren\\TatbelGit\\Pos_counter addition — 2026\\PosCounter.Net\\PosCounter.Net.csproj",
+        "projectUniqueName": "E:\\Yandex.Disk-ananchenkoiren\\TatbelGit\\Pos_counter addition — 2016\\PosCounter.Net\\PosCounter.Net.csproj",
         "projectName": "PosCounter.Net",
-        "projectPath": "E:\\Yandex.Disk-ananchenkoiren\\TatbelGit\\Pos_counter addition — 2026\\PosCounter.Net\\PosCounter.Net.csproj",
+        "projectPath": "E:\\Yandex.Disk-ananchenkoiren\\TatbelGit\\Pos_counter addition — 2016\\PosCounter.Net\\PosCounter.Net.csproj",
         "packagesPath": "C:\\Users\\user\\.nuget\\packages\\",
-        "outputPath": "E:\\Yandex.Disk-ananchenkoiren\\TatbelGit\\Pos_counter addition — 2026\\PosCounter.Net\\obj\\",
+        "outputPath": "E:\\Yandex.Disk-ananchenkoiren\\TatbelGit\\Pos_counter addition — 2016\\PosCounter.Net\\obj\\",
         "projectStyle": "PackageReference",
         "crossTargeting": true,
         "configFilePaths": [
@@ -19,16 +19,16 @@
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
         ],
         "originalTargetFrameworks": [
-          "net452"
+          "net46"
         ],
         "sources": {
           "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
-          "net452": {
-            "framework": "net452",
-            "targetAlias": "net452",
+          "net46": {
+            "framework": "net46",
+            "targetAlias": "net46",
             "projectReferences": {}
           }
         },
@@ -45,9 +45,9 @@
         "SdkAnalysisLevel": "10.0.300"
       },
       "frameworks": {
-        "net452": {
-          "framework": "net452",
-          "targetAlias": "net452",
+        "net46": {
+          "framework": "net46",
+          "targetAlias": "net46",
           "dependencies": {
             "Microsoft.NETFramework.ReferenceAssemblies": {
               "suppressParent": "All",
@@ -55,7 +55,7 @@
               "version": "[1.0.3, )",
               "autoReferenced": true
             },
-            "Microsoft.NETFramework.ReferenceAssemblies.net452": {
+            "Microsoft.NETFramework.ReferenceAssemblies.net46": {
               "suppressParent": "All",
               "target": "Package",
               "version": "[1.0.3, )"

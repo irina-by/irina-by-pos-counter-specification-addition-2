@@ -1,3 +1,4 @@
 E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition\PosCounter.Net\obj\Release\net46\PosCounter.Net.csproj.AssemblyReference.cache
 e:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — копия\PosCounter.Net\obj\Release\net46\PosCounter.Net.csproj.AssemblyReference.cache
 e:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2\PosCounter.Net\obj\Release\net46\PosCounter.Net.csproj.AssemblyReference.cache
+E:\Yandex.Disk-ananchenkoiren\TatbelGit\Pos_counter addition — 2016\PosCounter.Net\obj\Release\net46\PosCounter.Net.csproj.AssemblyReference.cache
