@@ -288,6 +288,7 @@ namespace PosCounter.Net.SpecGrid
                 }
 
                 var scopeNum = scope.ScopeIndex + 1;
+                /*
                 if (scope.IsNativeAcadTable)
                 {
                     var rows = scope.CellText?.GetLength(0) ?? 0;
@@ -303,6 +304,7 @@ namespace PosCounter.Net.SpecGrid
                         doc,
                         "[POSC] Mixed selection (Table + Line), using LINE path");
                 }
+                */
 
                 var mark = DescribeHeaderColumn(scope, scope.ColMark);
                 var name = DescribeHeaderColumn(scope, scope.ColName);
@@ -319,6 +321,7 @@ namespace PosCounter.Net.SpecGrid
                     $"Кол. — {(scope.ColQty >= 0 ? $"столбец {scope.ColQty} «{qty}»" : "не найдена")}.";
                 SpecGridLog.WriteCommandLine(doc, msg);
 
+                /*
                 if (!string.IsNullOrWhiteSpace(scope.GridLayer))
                 {
                     SpecGridLog.WriteCommandLine(
@@ -370,6 +373,7 @@ namespace PosCounter.Net.SpecGrid
                         SpecGridLog.WriteCommandLine(doc, missingKey1);
                     }
                 }
+                */
 
                 if (!scope.Valid)
                 {
@@ -415,6 +419,7 @@ namespace PosCounter.Net.SpecGrid
                         $"[POSC] Заголовок столбца Наименование не прочитан (столбец {scope.ColName}) — проверьте MText/слой в шапке.");
                 }
 
+                /*
                 var needsHeaderDiag = scope.ColMark < 0
                     || scope.ColName < 0
                     || scope.ColumnsInferredFromData
@@ -474,6 +479,7 @@ namespace PosCounter.Net.SpecGrid
                         SpecGridLog.WriteDiag(doc, $"ColQty fallback: {scope.ColQtyFallbackDiag}");
                     }
                 }
+                */
             }
         }
 
@@ -526,12 +532,13 @@ namespace PosCounter.Net.SpecGrid
 
                 if (scope.ColQty < 0)
                 {
-                    SpecGridLog.WriteDiagTail(
+                    SpecGridLog.WriteEngineerSummary(
                         doc,
                         $"Таблица {scope.ScopeIndex + 1} WriteQty пропущен: ColQty=-1");
                 }
             }
 
+            /*
             foreach (var scope in scopes)
             {
                 if (scope?.WriteQtyDiagLines == null || scope.WriteQtyDiagLines.Count == 0)
@@ -544,41 +551,14 @@ namespace PosCounter.Net.SpecGrid
                     SpecGridLog.WriteDiagTail(doc, $"Таблица {scope.ScopeIndex + 1} {line}");
                 }
             }
+            */
 
             SpecGridLog.WriteDiagTail(doc, $"WriteQty итог: записано={qtyWritten}, пропущено={skipped}");
         }
 
         private static void ReportScopeSummaryDiagnostic(Document doc, IReadOnlyList<ScopeGridResult> scopes)
         {
-            if (doc == null || scopes == null)
-            {
-                return;
-            }
-
-            foreach (var scope in scopes)
-            {
-                if (scope == null)
-                {
-                    continue;
-                }
-
-                var scopeNum = scope.ScopeIndex + 1;
-                var namesFilled = scope.MarkNamePairs?.Count(kv => !string.IsNullOrWhiteSpace(kv.Value)) ?? 0;
-                var qtySource = string.IsNullOrWhiteSpace(scope.ColQtySource)
-                    ? string.Empty
-                    : $" источник={scope.ColQtySource}";
-                var layoutFix = string.IsNullOrWhiteSpace(scope.ColQtyLayoutFixDiag)
-                    ? string.Empty
-                    : $" layout={scope.ColQtyLayoutFixDiag}";
-                var colQtyWarn = scope.ColQty < 0 ? " ВНИМАНИЕ: ColQty не найден — WriteQty пропущен" : string.Empty;
-                SpecGridLog.WriteDiagTail(
-                    doc,
-                    $"Таблица {scopeNum} ИТОГ: ColMark={scope.ColMark} ColName={scope.ColName} ColQty={scope.ColQty}{qtySource}{layoutFix}{colQtyWarn} | KeyToRowMark={scope.KeyToRowMark?.Count ?? 0} | имена={namesFilled}");
-            }
-
-            var combined = BuildCombinedMarkNames();
-            SpecGridLog.WriteDiagTail(doc, $"Имена в палитру (всего ключей): {combined.Count}");
-            SpecGridLog.WriteDiagTail(doc, SpecGridLog.FormatDllBuildStamp());
+            // ИТОГ ColMark/ColName/KeyToRowMark — разработческая диагностика, отключена.
         }
 
         private static void ReportPaletteVsScopeNamesDiagnostic(
@@ -626,58 +606,7 @@ namespace PosCounter.Net.SpecGrid
             IReadOnlyDictionary<int, int> qtyByKey,
             int totalQtyWritten)
         {
-            if (doc == null || scopes == null)
-            {
-                return;
-            }
-
-            var writtenByScope = new Dictionary<int, int>();
-            foreach (var scope in scopes)
-            {
-                if (scope?.WriteQtyDiagLines == null)
-                {
-                    continue;
-                }
-
-                var count = scope.WriteQtyDiagLines.Count(
-                    l => l.IndexOf("action=update", StringComparison.OrdinalIgnoreCase) >= 0
-                        || l.IndexOf("action=create", StringComparison.OrdinalIgnoreCase) >= 0);
-                writtenByScope[scope.ScopeIndex] = count;
-            }
-
-            var allEmpty = scopes
-                .Where(s => s?.EmptyNameKeys != null)
-                .SelectMany(s => s.EmptyNameKeys)
-                .Distinct()
-                .OrderBy(k => k)
-                .ToList();
-            SpecDiagPolicy.RegisterEmptyNameKeys(allEmpty);
-
-            foreach (var scope in scopes)
-            {
-                if (scope == null)
-                {
-                    continue;
-                }
-
-                var scopeNum = scope.ScopeIndex + 1;
-                var keys = scope.KeyToRowMark?.Count ?? 0;
-                var names = scope.MarkNamePairs?.Count(kv => !string.IsNullOrWhiteSpace(kv.Value)) ?? 0;
-                var empty = scope.EmptyNameKeys?.Count ?? 0;
-                var emptyList = empty > 0
-                    ? string.Join(",", scope.EmptyNameKeys.OrderBy(k => k).Take(12))
-                    : string.Empty;
-                var headerPath = string.IsNullOrWhiteSpace(scope.HeaderPath) ? "?" : scope.HeaderPath;
-                var schema = string.IsNullOrWhiteSpace(scope.SchemaSource)
-                    ? (scope.ColumnsInheritedFromSchema ? "inherited" : scope.ColumnsInferredFromData ? "infer" : "grid")
-                    : scope.SchemaSource;
-                var outside = scope.UnassignedTextCountAfterDataPass;
-                var qtyWritten = writtenByScope.TryGetValue(scope.ScopeIndex, out var qw) ? qw : 0;
-                var colDes = scope.ColDesignation >= 0 ? scope.ColDesignation.ToString(CultureInfo.InvariantCulture) : "-";
-                SpecGridLog.WriteDiagTail(
-                    doc,
-                    $"[KV-SUMMARY] табл.{scopeNum} ColM/N/Q/D={scope.ColMark}/{scope.ColName}/{scope.ColQty}/{colDes} headerPath={headerPath} keys={keys} names={names} empty={empty} emptyKeys={emptyList} qtyWritten={qtyWritten} outside={outside} schema={schema}");
-            }
+            // [KV-SUMMARY] — разработческая диагностика, отключена для инженера.
         }
 
         private static string DescribeHeaderColumn(ScopeGridResult scope, int col)
@@ -1939,6 +1868,7 @@ namespace PosCounter.Net.SpecGrid
                     SpecGridLog.WriteCommandLine(
                         doc,
                         $"[POSC] Марки в данных не найдены (ColMark={markColLabel}, RowDataStart={scope.RowDataStart}) — проверьте цифры в «Поз.».");
+                    /*
                     var markCounts = TableGridBuilder.FormatDataMarkCountsDiagnostic(scope);
                     if (!string.IsNullOrWhiteSpace(markCounts))
                     {
@@ -1946,6 +1876,7 @@ namespace PosCounter.Net.SpecGrid
                             doc,
                             $"[POSC] Марок в данных по столбцам: {markCounts}");
                     }
+                    */
                 }
             }
         }

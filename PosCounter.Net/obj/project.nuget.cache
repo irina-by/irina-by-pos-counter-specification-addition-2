@@ -1,12 +1,12 @@
 {
   "version": 2,
-  "dgSpecHash": "5WkmB/htz/4=",
+  "dgSpecHash": "EfAGPd3jXfY=",
   "success": true,
-  "projectFilePath": "C:\\Project\\PosCounter.Net\\PosCounter.Net.csproj",
+  "projectFilePath": "E:\\Yandex.Disk-ananchenkoiren\\TatbelGit\\Pos_counter addition — 2\\PosCounter.Net\\PosCounter.Net.csproj",
   "expectedPackageFiles": [
-    "C:\\Users\\Salnikava.I\\.nuget\\packages\\microsoft.netframework.referenceassemblies\\1.0.3\\microsoft.netframework.referenceassemblies.1.0.3.nupkg.sha512",
-    "C:\\Users\\Salnikava.I\\.nuget\\packages\\microsoft.netframework.referenceassemblies.net452\\1.0.3\\microsoft.netframework.referenceassemblies.net452.1.0.3.nupkg.sha512",
-    "C:\\Users\\Salnikava.I\\.nuget\\packages\\system.valuetuple\\4.5.0\\system.valuetuple.4.5.0.nupkg.sha512"
+    "C:\\Users\\user\\.nuget\\packages\\microsoft.netframework.referenceassemblies\\1.0.3\\microsoft.netframework.referenceassemblies.1.0.3.nupkg.sha512",
+    "C:\\Users\\user\\.nuget\\packages\\microsoft.netframework.referenceassemblies.net452\\1.0.3\\microsoft.netframework.referenceassemblies.net452.1.0.3.nupkg.sha512",
+    "C:\\Users\\user\\.nuget\\packages\\system.valuetuple\\4.5.0\\system.valuetuple.4.5.0.nupkg.sha512"
   ],
   "logs": []
 }

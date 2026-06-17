@@ -1,6 +1,6 @@
 ---
 name: Factual Program Architecture
-overview: Фактическое описание PosCounter.Net v4.2.0 — от NETLOAD до записи «Кол.» и палитры. Соответствует коду на 2026-06-15 (эталон PosCounter.Net1 + qty из видимых строк палитры).
+overview: Фактическое описание PosCounter.Net v4.2.0 — от NETLOAD до записи «Кол.» и палитры. Соответствует коду на 2026-06-16 (эталон PosCounter.Net1 + C4 gate + qty из видимых строк).
 todos: []
 isProject: false
 ---
@@ -10,8 +10,8 @@ isProject: false
 Документ описывает **как программа реально работает** по текущему коду. Не ТЗ и не план изменений.
 
 **Версия:** 4.2.0-table-grid-lines  
-**Актуализация:** 2026-06-15  
-**Сравнение со старой сборкой:** [.cursor/plans/diff_vs_PosCounter.Net1.md](diff_vs_PosCounter.Net1.md)
+**Актуализация:** 2026-06-16  
+**Сравнение со старой сборкой:** [.cursor/plans/diff_vs_PosCounter.Net1.md](diff_vs_PosCounter.Net1.md) (в т.ч. vs commit `9117b5a`)
 
 ---
 
@@ -37,7 +37,9 @@ flowchart TD
 
 **Палитра vs scope:** ЗАПУСТИТЬ даёт N ключей по всему чертежу; «Выбрать спецификацию» даёт M имён только по выделенным таблицам. M < N — нормально, если не все листы выделены.
 
-**Отличие от PosCounter.Net1:** код подсчёта и спецификации **идентичен** эталону; изменён только источник qty при writeback (видимые строки, не `_lastCountRows`).
+**Отличие от PosCounter.Net1:** код спецификации **идентичен** эталону; подсчёт — **+** `CalloutMarkGate` (только C4: цифра в круге не считается); qty при writeback — **видимые** строки палитры, не `_lastCountRows`.
+
+**СПДС:** чертежи с объектами СПДС (proxy) **не поддерживаются** — см. §3.1.
 
 ---
 
@@ -65,15 +67,38 @@ flowchart TD
 
 ## 3. Модуль 1 — подсчёт выносок (`PosCounterEngine`)
 
-**Файл:** `Engine/PosCounterEngine.cs` — **идентичен PosCounter.Net1**
+**Файлы:** `Engine/PosCounterEngine.cs`, `Engine/CalloutMarkGate.cs`
 
-- Источник: выделение **или** галочка «Все объекты в модели».
-- Типы: `DBText`, `MText`, атрибуты блоков (рекурсия).
-- **Не обрабатывается:** `MLeader`, `ProxyEntity` (СПДС proxy).
-- `ExtractPositionNumber` / `MarkKeyParser.TryParse` — цифры 1..10000; группировка `(слой, текст)` → `Quantity`.
+- Источник: выделение **или** галочка «Все объекты в модели» (на листе — активный viewport).
+- Типы: `DBText`, `MText`, атрибуты блоков (рекурсия вложенных блоков).
+- **Не обрабатывается:** `MLeader`, **`ProxyEntity` (СПДС proxy)**.
+- Распознавание: `SanitizeRawContents` → **`ExtractPositionNumber`** (как Net1: «Поз. 3», «№5», голая цифра).
+- Фильтр **C4** (`CalloutMarkGate`): цифра **внутри круга** — **не выноска** (не попадает в палитру). C1/C3 **отключены** (упрощение 2026-06-16).
 - `MTextPlainText.ResolveLayer` — слой `0` → слой блока; xref `|` отрезается.
+- Диагностика: `Stopwatch` → `[POSC] count source=… texts=… circles=… rejectC4=… layerSample=…` в CMD (краткий итог для инженера; `[POSC-DIAG]` отключён).
 
-**Нет** `CalloutMarkGate` — фильтры выносок по геометрии (треугольник/круг) не применяются.
+### 3.1. СПДС — не работает
+
+| Ситуация | Поведение |
+|----------|-----------|
+| Чертёж СПДС / nanoCAD СПДС, объекты **proxy** | **Не читаются** — нет `ProxyEntityHelper`, нет Explode proxy |
+| Предупреждение **SPDSExtApp** при открытии DWG | Модуль СПДС в AutoCAD не установлен; программа **не заменяет** СПДС |
+| `PROXYGRAPHICS = 1` | **Не помогает** — proxy не обрабатывается в текущей версии |
+| Таблица спецификации из **LINE + TEXT** (обычная графика) | Работает, если не proxy |
+| Выноски как **TEXT/MTEXT/атрибуты** (не proxy) | Работает |
+
+**Для инженера:** на чертежах СПДС используйте **экспорт в обычный DWG** (развёрнутая графика) или чертёж без proxy-объектов.
+
+### 3.2. `CalloutMarkGate` (только C4)
+
+| Компонент | Назначение |
+|-----------|------------|
+| `BuildIndex` | Сбор **Circle** из sourceIds + рекурсия в блоки |
+| `PopulateViewportGeometry` | Один selection **`CIRCLE`** по полигону viewport |
+| `ShouldCountAsCalloutMark` | `IsDigitInsideCircleMarker` → `RejectC4++` |
+| `GeoIndex` | Buckets 15 мм по центрам кругов |
+
+Gate вызывается **до** `acc.Increment`; **слой не проверяется**.
 
 ---
 
@@ -219,7 +244,7 @@ POSC2_SPEC_INTERNAL
 
 ---
 
-## 12. Кнопка Сброс
+## 12. Кнопка Сброс и UX палитры
 
 `ResetPaletteState` в `PosCounterControl`:
 
@@ -227,14 +252,23 @@ POSC2_SPEC_INTERNAL
 - сбрасывает фильтры палитры;
 - **не удаляет** уже записанные цифры на чертеже (только состояние палитры).
 
+**После ЗАПУСТИТЬ** (`ApplyRunResult`):
+
+- статус «Идёт подсчёт…» → результат в таблице;
+- `BtnRun.IsEnabled = false` на время подсчёта;
+- сброс фильтра **Слой** (`_filterLayer.Clear()`, `TxtSearchLayer` пустой) — чтобы в палитре были все слои из нового подсчёта.
+
+**PickFirst:** при клике ЗАПУСТИТЬ `PaletteHost.RequestRun` сохраняет `SelectImplied()` в `_pendingPickFirstIds`; `PosCounterEngine` читает через `TryConsumePendingPickFirst` (до очереди команды выделение не теряется).
+
 ---
 
 ## 13. Вспомогательные модули
 
 | Файл | Назначение |
 |------|------------|
-| `CellIndex.cs` | TryGetCellIndex, GetCellText, GetDominantRow |
-| `MTextPlainText.cs` | санитизация, NameScore; MarkKeyParser |
+| `CellIndex.cs` | TryGetCellIndex, GetCellText; **цифра-марка** не режется по близости |
+| `MTextPlainText.cs` | санитизация, NameScore; MarkKeyParser; `IsExactCalloutDigitText` (в gate не используется) |
+| `Engine/CalloutMarkGate.cs` | **C4** — цифра в круге; индекс кругов |
 | `MarkKeyParser.cs` | разбор марки (поз., №, 1..10000) |
 | `SpecColumnSchema.cs` | наследование столбцов между scope |
 | `SpecDiagPolicy.cs` | sample keys для CMD |
@@ -242,7 +276,7 @@ POSC2_SPEC_INTERNAL
 | `SpecGridSession.cs` | сессия scope'ов |
 | `ExportService.cs` | Excel/CSV из палитры |
 
-**Удалены (не в текущей версии):** `CalloutMarkGate.cs`, `ProxyEntityHelper.cs`.
+**Нет в коде (не поддерживается):** `ProxyEntityHelper.cs` — СПДС proxy.
 
 ---
 
@@ -254,8 +288,8 @@ POSC2_SPEC_INTERNAL
 | 2025–2026 | net8.0-windows | VS: Release \| x64 \| net8.0-windows | `dll 2026\` или `bin\x64\Release\net8.0-windows\` |
 
 - Путь AC 2016: `PosCounter.Net\build\AutoCAD.props` → `AutoCADSdkDirNet46`.
-- Инструкция: `PosCounter.Net\build\СБОРКА_VS_AC2016.md`, `README_СБОРКА_AC2016.txt`.
-- Скрипты `build-ac2016.cmd` / `build-ac2026.cmd` **удалены** — сборка вручную в VS.
+- Инструкция по сборке: **`docs/BUILD.md`** (скрипты `build-ac2016.cmd` / `build-ac2026.cmd` **удалены** — только Visual Studio).
+- ValueTuple для AC 2016: `PosCounter.Net\lib\netstandard1.0\System.ValueTuple.dll` → копировать в `dll 2016\` рядом с `PosCounter.Net.dll`.
 
 | Артефакт | Назначение |
 |----------|------------|
@@ -266,11 +300,12 @@ POSC2_SPEC_INTERNAL
 
 ## 15. Красные зоны (не ломать без ТЗ)
 
-- `PosCounterEngine` — идентичен эталону Net1.
+- `TableGrid.cs`, `SpecGridService.cs` — идентичны эталону Net1.
 - `BuildMergedGridAxes`, порядок GridYs desc.
 - Pass-1 шапка: markAnchor, `DetectHeader*`.
 - Qty writeback — **только видимые строки палитры** (`TryBuildQtyByKeyFromVisibleRows`).
 - Qty на чертёж — только ColQty; место вставки не менять без ТЗ.
+- `CalloutMarkGate` — только **C4** (без возврата C1/C3 без отдельного ТЗ).
 
 ---
 
@@ -278,7 +313,9 @@ POSC2_SPEC_INTERNAL
 
 | # | Кейс | Ожидание |
 |---|------|----------|
-| H | любая таблица | CMD «Распознана шапка», ColMark/ColName/ColQty |
+| H | любая таблица (LINE+TEXT, не СПДС proxy) | CMD «Распознана шапка», ColMark/ColName/ColQty |
+| SPD | чертёж СПДС с proxy | **не работает** — нужен DWG без proxy |
+| C4 | цифра в круге на плане | **не** в палитре после ЗАПУСТИТЬ |
 | 1 | первая марка после шапки | markAnchor, имя марки 1 не пустое |
 | Qty | фильтр слоя в палитре | в «Кол.» — сумма **видимых** строк, не скрытых |
 | Reset | Сброс → Выбрать спецификацию без ЗАПУСТИТЬ | WriteQty записано=0 |

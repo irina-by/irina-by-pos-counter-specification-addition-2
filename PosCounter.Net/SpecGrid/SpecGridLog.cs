@@ -6,8 +6,8 @@ using Autodesk.AutoCAD.ApplicationServices;
 namespace PosCounter.Net.SpecGrid
 {
     /// <summary>
-    /// В CMD: подсказки инженеру (<see cref="WriteCommandLine"/>) и диагностика AC 2016 (<see cref="WriteDiag"/>).
-    /// Файловые логи отключены; критичные трассировки — через <see cref="WriteTrace"/> / <see cref="WriteDiag"/>.
+    /// CMD для инженера: краткие [POSC]/[INFO] и предупреждения.
+    /// Разработческая диагностика <see cref="WriteDiag"/> / <see cref="WriteTrace"/> отключена (закомментирована).
     /// </summary>
     internal sealed class SpecGridLog
     {
@@ -15,12 +15,10 @@ namespace PosCounter.Net.SpecGrid
         private static int _diagRemaining;
         private static Document _diagDocument;
 
-        /// <summary>Раньше включало [ROW-DATA] в CMD — отключено.</summary>
         public void SetCommandLineDocument(Document doc)
         {
         }
 
-        /// <summary>Диагностика RowDataStart — отключена.</summary>
         public void RowDataDiag(string message)
         {
         }
@@ -66,14 +64,12 @@ namespace PosCounter.Net.SpecGrid
         {
         }
 
-        /// <summary>Сброс лимита [POSC-DIAG] на одну операцию «Выбрать спецификацию».</summary>
         public static void ResetDiagSession(Document doc, int maxLines = DefaultDiagBudget)
         {
             _diagDocument = doc;
             _diagRemaining = maxLines > 0 ? maxLines : DefaultDiagBudget;
         }
 
-        /// <summary>Метка DLL для первой строки диагностики спецификации.</summary>
         public static string FormatDllBuildStamp()
         {
 #if NET8_0
@@ -106,9 +102,11 @@ namespace PosCounter.Net.SpecGrid
             return "?";
         }
 
-        /// <summary>Диагностика в CMD с префиксом [POSC-DIAG] (без файлов, с лимитом строк).</summary>
+        /// <summary>Разработческая диагностика [POSC-DIAG] — отключена.</summary>
         public static void WriteDiag(Document doc, string message)
         {
+            // Инженеру: только WriteCommandLine / WriteDiagTail (краткий whitelist).
+            /*
             if (doc == null || string.IsNullOrWhiteSpace(message) || _diagRemaining <= 0)
             {
                 return;
@@ -116,34 +114,71 @@ namespace PosCounter.Net.SpecGrid
 
             _diagRemaining--;
             WriteCommandLine(doc, "[POSC-DIAG] " + message.Trim());
+            */
         }
 
-        /// <summary>Итоговые строки — всегда в CMD, без учёта бюджета.</summary>
-        public static void WriteDiagTail(Document doc, string message)
+        /// <summary>Краткий итог для инженера — префикс [POSC].</summary>
+        public static void WriteEngineerSummary(Document doc, string message)
         {
             if (doc == null || string.IsNullOrWhiteSpace(message))
             {
                 return;
             }
 
-            WriteCommandLine(doc, "[POSC-DIAG] " + message.Trim());
+            WriteCommandLine(doc, "[POSC] " + message.Trim());
         }
 
-        /// <summary>Трассировка метода: [POSC-DIAG] [COLQTY] … / [HEADER] / [NAME] / [WRITEQTY].</summary>
+        /// <summary>Итоговые строки для инженера (без [POSC-DIAG]).</summary>
+        public static void WriteDiagTail(Document doc, string message)
+        {
+            if (!IsEngineerTailMessage(message))
+            {
+                return;
+            }
+
+            WriteEngineerSummary(doc, message);
+        }
+
+        private static bool IsEngineerTailMessage(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return false;
+            }
+
+            var m = message.Trim();
+            if (m.StartsWith("count source=", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (m.StartsWith("WriteQty итог:", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (m.IndexOf("WriteQty пропущен", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            if (m.StartsWith("[KV-SUMMARY]", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (m.IndexOf("ВНИМАНИЕ:", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>Трассировка [COLQTY]/[HEADER]/… — отключена.</summary>
         public static void WriteTrace(string category, string message)
         {
-            if (string.IsNullOrWhiteSpace(category) || string.IsNullOrWhiteSpace(message))
-            {
-                return;
-            }
-
-            var doc = _diagDocument;
-            if (doc == null)
-            {
-                return;
-            }
-
-            WriteDiag(doc, $"[{category}] {message.Trim()}");
+            // WriteDiag(_diagDocument, $"[{category}] {message?.Trim()}");
         }
 
         /// <summary>Сообщение в командную строку AutoCAD (без Enter и без файлов).</summary>

@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PosCounter.Net")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("4.2.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("4.2.0-table-grid-lines")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("4.2.0-table-grid-lines+31e7aa37b10a2e1fd06f2d470d3d8a26cd7231d3")]
 [assembly: System.Reflection.AssemblyProductAttribute("PosCounter.Net")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PosCounter.Net")]
 [assembly: System.Reflection.AssemblyVersionAttribute("4.2.0.0")]

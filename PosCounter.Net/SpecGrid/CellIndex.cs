@@ -133,6 +133,22 @@ namespace PosCounter.Net.SpecGrid
             TextSample t,
             string plain)
         {
+            // Important: In ColMark cells we may have overlapping texts (digit mark + designation like "21 ОСТ ...").
+            // The digit must not be dropped as "duplicate by proximity", otherwise markAnchor/data rows break.
+            // We still dedupe exact same digit strings.
+            if (MTextPlainText.IsExactDigitMark(plain))
+            {
+                foreach (var c0 in candidates)
+                {
+                    if (string.Equals(c0.Plain, plain, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
             foreach (var c in candidates)
             {
                 if (string.Equals(c.Plain, plain, StringComparison.OrdinalIgnoreCase))

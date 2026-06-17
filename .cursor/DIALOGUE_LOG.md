@@ -361,3 +361,49 @@
 > [2026-06-15] Задача: документация — сравнение с PosCounter.Net1, обновить factual plan, README, Работа программы.
 > Правка: `diff_vs_PosCounter.Net1.md`; обновлены factual_program_architecture, README, Работа программы (Сброс, qty видимые, сборка VS).
 > Результат: ЗАРАБОТАЛО.
+
+> [2026-06-16] Задача: вернуть фильтры выносок при «ЗАПУСТИТЬ» (C1 треугольник LINE, C3 соседний текст, C4 круг, C2 только голая цифра), при этом распознавание таблиц (шапка/столбцы/имена/наследование) не менять.
+> Правка: добавлен `Engine/CalloutMarkGate.cs` и подключён в `Engine/PosCounterEngine.cs` перед `acc.Increment` (геометрия рядом с текстом); `TrySelectInViewportPolygon` расширен на `LINE,CIRCLE`; `MTextPlainText.IsExactCalloutDigitText` — строгая проверка (без снятия `Поз.`/`№`) и используется в `ProcessTextValue` вместо `ExtractPositionNumber` для подсчёта выносок.
+> Результат: КОД ГОТОВ — пересборка и ручная проверка в AutoCAD по кейсам (цифра в круге/треугольник/соседний текст/«Поз. 3»).
+
+> [2026-06-16] Задача: «ЗАПУСТИТЬ» на листе (viewport) стал медленным и в командной строке появляется «Выполняется регенерация листов.».
+> Причина: выборка viewport была расширена на `LINE,CIRCLE`, из-за чего AutoCAD подбирал слишком много геометрии и запускал тяжёлую регенерацию.
+> Правка: `TrySelectInViewportPolygon` снова выбирает только `TEXT,MTEXT,INSERT,ATTRIB`; геометрия для C1/C4 (LINE/CIRCLE) добирается **локально** вокруг каждой цифры через маленькое окно поиска в `CalloutMarkGate` (без глобальной выборки по viewport).
+> Результат: КОД ГОТОВ — пересборка и проверка: «ЗАПУСТИТЬ» быстрее, C1/C4 сохраняются, нет массовой регенерации листов.
+
+> [2026-06-16] Задача: после нажатия «ЗАПУСТИТЬ» не ясно, идёт ли обработка (кажется, что «зависло»).
+> Правка: `UI/PosCounterControl.xaml.cs` — при клике «ЗАПУСТИТЬ» статус меняется на «Идёт подсчёт…», кнопка временно блокируется; после получения результата (или ошибки) кнопка снова активируется.
+> Результат: UX — понятно, что расчёт выполняется, даже если AutoCAD делает тяжёлую операцию.
+
+> [2026-06-16] Задача: спецификация «Ушко» — в столбце «Марка» вместо цифр 1–3 попадал текст «21 ОСТ…», из-за этого `markAnchor firstMarkRow` становился 4 и имена «Ушко 1/2» не попадали в палитру.
+> Причина: в одной ячейке ColMark накладывались два текста (цифра + обозначение), а защита от «дубликатов по близости» в `CellIndex.GetCellText` могла выкинуть цифру как дубликат.
+> Правка: `SpecGrid/CellIndex.cs` — **цифры‑марки** (`IsExactDigitMark`) больше не отбрасываются как «дубликат по близости» (дедуп только по точному совпадению строки). Для ColMark остаётся приоритет цифр.
+> Результат: ожидается, что `firstMarkRow` станет 1 (или 2), будут привязаны ключи 1–4, а имена «Ушко 1/2» появятся в палитре (проверка в AutoCAD).
+
+> [2026-06-16] Задача: ускорить подсчёт выносок (план ускорение_подсчёта_выносок) — убрать N× SelectCrossingWindow на каждую цифру в viewport; сохранить C1–C4.
+> Правка: `CalloutMarkGate` — `PopulateViewportGeometry` (один selection LINE,CIRCLE по viewport), пространственные buckets 15 мм, `ShouldCountAsCalloutMark` без editor/per-digit selection; `PosCounterEngine` — вызов PopulateViewportGeometry после BuildIndex, Stopwatch + GeoText/Line/Circle counts; `Commands` — `[POSC-DIAG] count source=… texts=… lines=… circles=… ms=…`; docs §18.
+> Результат: КОД ГОТОВ — пересборка Release|x64|net452, NETLOAD; проверка скорости на листе+model и кейсы C1–C4 в AutoCAD.
+
+> [2026-06-16] Задача: ошибка сборки CS0122 — `_textBuckets`/`_circleBuckets`/`_lineBuckets` недоступны из `CalloutMarkGate`.
+> Причина: в C# внешний класс не может читать private-поля вложенного `GeoIndex`.
+> Правка: методы `QueryTextNeighbors`/`QueryCircleNeighbors`/`QueryLineNeighbors` и вспомогательные `QueryBuckets`, `BucketPoint`, `EnumerateCellKeys`, `PackCell` перенесены внутрь `GeoIndex`.
+> Результат: ожидает пересборку в VS.
+
+> [2026-06-16] Задача: пропадают слои/марки в палитре после ЗАПУСТИТЬ (план все_слои_выносок) — выровнять с PosCounter.Net1.
+> Причина: подсчёт не фильтрует по Layer; отличие — `IsExactCalloutDigitText` вместо `ExtractPositionNumber`; GeoIndex без блоков.
+> Правка: `ProcessTextValue` → `SanitizeRawContents` + `ExtractPositionNumber` (как Net1); `CalloutMarkGate.BuildIndex` — рекурсия BlockReference/атрибуты; `GateStats` + layerSample в `[POSC-DIAG] count`; `ApplyRunResult` — сброс `_filterLayer`; docs §18.
+> Результат: КОД ГОТОВ — пересборка NETLOAD; сравнить с Net1 на том же чертеже, проверить C1–C4.
+
+> [2026-06-16] Задача: упростить подсчёт выносок (план упростить_подсчёт_выносок) — только C4, убрать C1/C3/LINE/TEXT индекс.
+> Правка: `CalloutMarkGate` — только `CircleAnchor` + buckets; `PopulateViewportGeometry` selection `CIRCLE`; `ShouldCountAsCalloutMark` только `IsDigitInsideCircleMarker`; `PosCounterEngine`/`Commands` — диагностика `rejectC4`, `SeenDigits`, `GeoCircleCount`; docs §18, diff_vs_PosCounter.Net1.
+> Результат: КОД ГОТОВ — пересборка Release|x64|net452, NETLOAD; проверка в AutoCAD по чеклисту (голая цифра, круг, треугольник, «дет.»).
+
+> [2026-06-16] Задача: обновить документацию (factual_program_architecture, README, INSTRUCTION_ENGINEER) — актуализация C4, СПДС не работает.
+> Правка: убраны устаревшие сведения про Explode proxy и C1–C4; явно: СПДС/proxy не поддерживается; C4 — цифра в круге не в палитре.
+> Результат: документация обновлена.
+
+> [2026-06-16] Задача: переписать INSTRUCTION_ENGINEER.md простым языком для инженера (не программиста).
+> Правка: убран технический жаргон (ColMark, SCHEMA, proxy, KV-SUMMARY и т.д.); структура по шагам; отдельно СПДС не работает, цифры в кругах, фильтры и «Кол.»; короткий раздел про сообщения в CMD.
+> [2026-06-16] Задача: оставить в CMD только краткие логи для инженера + предупреждения; баннер NETLOAD build= без изменений; остальное закомментировать.
+> Правка: `SpecGridLog.cs` — `WriteDiag`/`WriteTrace` no-op; `WriteDiagTail` → whitelist → `[POSC]`; `Commands.cs` — убрана строка AutoCAD R* после NETLOAD; `SpecGridService.cs` — закомментированы verbose `ReportDetectedHeader`, `[KV-SUMMARY]`, `ReportScopeSummaryDiagnostic`; docs INSTRUCTION_ENGINEER, README, DEVELOPER, Работа программы, factual plan.
+> Результат: КОД ГОТОВ — пересборка NETLOAD; в CMD только `[POSC]`/`[INFO]` и предупреждения.

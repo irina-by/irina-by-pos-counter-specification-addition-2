@@ -315,6 +315,17 @@ namespace PosCounter.Net.SpecGrid
             return int.TryParse(t, NumberStyles.None, CultureInfo.InvariantCulture, out var v) && v >= 1 && v <= 10000;
         }
 
+        public static bool IsExactCalloutDigitText(string raw)
+        {
+            var t = SanitizeRawContents(raw);
+            if (string.IsNullOrWhiteSpace(t))
+            {
+                return false;
+            }
+
+            return IsExactDigitMark(t.Trim());
+        }
+
         public static bool TryParseMarkKey(string text, out int key)
         {
             return MarkKeyParser.TryParse(text, out key);

@@ -63,12 +63,9 @@ namespace PosCounter.Net
                 doc.Editor.WriteMessage(
                     $"\n[POSC] PosCounter.Net {info} ({targetLabel}) build={buildStamp} загружен.\n");
 
-                var acDiag = TryFormatAcadReleaseForDiag(targetLabel, buildStamp);
-                if (!string.IsNullOrWhiteSpace(acDiag))
-                {
-                    SpecGridLog.ResetDiagSession(doc);
-                    SpecGridLog.WriteDiag(doc, acDiag);
-                }
+                // Разработческая строка AutoCAD R* / DLL — отключена (инженеру достаточно баннера выше).
+                // var acDiag = TryFormatAcadReleaseForDiag(targetLabel, buildStamp);
+                // if (!string.IsNullOrWhiteSpace(acDiag)) { SpecGridLog.WriteDiag(doc, acDiag); }
             }
             catch
             {
@@ -173,6 +170,29 @@ namespace PosCounter.Net
 
                 var engine = new PosCounterEngine();
                 var res = engine.CountWithInfo(PaletteHost.PendingCountAllInModel);
+
+                if (doc != null && res != null)
+                {
+                    var source = res.UsedViewportSelection
+                        ? "viewport"
+                        : (string.Equals(res.SourceDescription, "выделение", StringComparison.Ordinal)
+                            ? "selection"
+                            : (string.Equals(res.SourceDescription, "вся модель", StringComparison.Ordinal)
+                                ? "model"
+                                : res.SourceDescription ?? "?"));
+                    SpecGridLog.WriteDiagTail(
+                        doc,
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "count source={0} texts={1} circles={2} ms={3} layers={4} layerSample={5} rejectC4={6}",
+                            source,
+                            res.SeenDigits,
+                            res.GeoCircleCount,
+                            res.CountElapsedMs,
+                            res.LayerCount,
+                            string.IsNullOrWhiteSpace(res.LayerSample) ? "-" : res.LayerSample,
+                            res.RejectC4));
+                }
 
                 var control = PaletteHost.Control;
                 if (control == null)
