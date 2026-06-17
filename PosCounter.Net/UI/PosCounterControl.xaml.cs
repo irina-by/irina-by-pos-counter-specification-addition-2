@@ -282,12 +282,14 @@ namespace PosCounter.Net.UI
             var countAllInModel = PullSettingsFromUi().CountAllInModel;
             if (countAllInModel)
             {
-                SetStatus("Подсчёт...");
+                SetStatus("Идёт подсчёт... (если долго — значит AutoCAD обрабатывает лист/видовой экран)");
             }
             else
             {
-                SetStatus("Подсчёт по выделенным объектам");
+                SetStatus("Идёт подсчёт по выделенным объектам...");
             }
+
+            try { BtnRun.IsEnabled = false; } catch { /* ignore */ }
             PaletteHost.RequestRun(countAllInModel);
         }
 
@@ -298,7 +300,7 @@ namespace PosCounter.Net.UI
                 _isInternalUpdate = true;
                 try
                 {
-                    var rows = res?.Rows ?? Array.Empty<PosRow>();
+                    var rows = res?.Rows ?? ArrayCompat.Empty<PosRow>();
                     _lastCountRows = rows.Select(r => new PosRow
                     {
                         Text = r.Text,
@@ -310,6 +312,12 @@ namespace PosCounter.Net.UI
                         SourceHandles = r.SourceHandles != null ? new List<string>(r.SourceHandles) : new List<string>()
                     }).ToList();
                     _rowsAll = new ObservableCollection<PosRowVm>(_lastCountRows.Select(r => new PosRowVm(r)));
+                    _filterLayer.Clear();
+                    if (TxtSearchLayer != null)
+                    {
+                        TxtSearchLayer.Text = string.Empty;
+                    }
+
                     InitGridView();
                     GridResults.UnselectAll();
 
@@ -354,12 +362,14 @@ namespace PosCounter.Net.UI
                 finally
                 {
                     _isInternalUpdate = false;
+                    try { BtnRun.IsEnabled = true; } catch { /* ignore */ }
                 }
             }
             catch (Exception ex)
             {
                 MessageBox.Show(ex.Message, "POS COUNTER", MessageBoxButton.OK, MessageBoxImage.Error);
                 SetStatus("[ERROR] Ошибка обновления таблицы.");
+                try { BtnRun.IsEnabled = true; } catch { /* ignore */ }
             }
         }
 
@@ -440,7 +450,12 @@ namespace PosCounter.Net.UI
             var missingQty = payload.MissingQtyMarks != null && payload.MissingQtyMarks.Count > 0
                 ? $" Нет количества для марок: {string.Join(", ", payload.MissingQtyMarks)}."
                 : string.Empty;
-            SetStatus($"[OK] Спецификация: имён={payload.MarkNames?.Count ?? 0}, Кол. записано={payload.QtyWritten}, пропущено={payload.QtySkipped}.{missingQty}");
+            var namesCount = payload.MarkNames?.Count ?? 0;
+            var paletteCount = payload.PaletteKeyCount > 0 ? payload.PaletteKeyCount : namesCount;
+            var namesGap = paletteCount > namesCount
+                ? $" Имён={namesCount} из {paletteCount} ключей палитры — выделите все листы спецификации."
+                : string.Empty;
+            SetStatus($"[OK] Спецификация: имён={namesCount}, Кол. записано={payload.QtyWritten}, пропущено={payload.QtySkipped}.{missingQty}{namesGap}");
             RefreshGridRows();
         }
 

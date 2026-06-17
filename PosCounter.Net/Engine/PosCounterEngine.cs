@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using Autodesk.AutoCAD.ApplicationServices;
@@ -27,12 +28,18 @@ namespace PosCounter.Net.Engine
 
         public sealed class PosCountResult
         {
-            public IReadOnlyList<PosRow> Rows { get; set; } = Array.Empty<PosRow>();
+            public IReadOnlyList<PosRow> Rows { get; set; } = ArrayCompat.Empty<PosRow>();
             public bool UsedViewportSelection { get; set; }
             public bool IncludedPaperSpace { get; set; }
             public string SourceDescription { get; set; }
             public int SourceObjectCount { get; set; }
             public string DebugSummary { get; set; }
+            public int GeoCircleCount { get; set; }
+            public long CountElapsedMs { get; set; }
+            public int SeenDigits { get; set; }
+            public int RejectC4 { get; set; }
+            public int LayerCount { get; set; }
+            public string LayerSample { get; set; }
 
             /// <summary>
             /// Deep-copy rows for cross-thread UI handoff (no shared list instances with the engine run).
@@ -40,7 +47,7 @@ namespace PosCounter.Net.Engine
             public PosCountResult CloneDetached()
             {
                 var list = new List<PosRow>();
-                foreach (var r in Rows ?? Array.Empty<PosRow>())
+                foreach (var r in Rows ?? ArrayCompat.Empty<PosRow>())
                 {
                     if (r == null)
                     {
@@ -68,8 +75,32 @@ namespace PosCounter.Net.Engine
                     IncludedPaperSpace = IncludedPaperSpace,
                     SourceDescription = SourceDescription,
                     SourceObjectCount = SourceObjectCount,
-                    DebugSummary = DebugSummary
+                    DebugSummary = DebugSummary,
+                    GeoCircleCount = GeoCircleCount,
+                    CountElapsedMs = CountElapsedMs,
+                    SeenDigits = SeenDigits,
+                    RejectC4 = RejectC4,
+                    LayerCount = LayerCount,
+                    LayerSample = LayerSample
                 };
+            }
+        }
+
+        private sealed class CountDiagnostics
+        {
+            public readonly CalloutMarkGate.GateStats GateStats = new CalloutMarkGate.GateStats();
+            public readonly Dictionary<string, int> AcceptedByLayer = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            public int SeenDigits;
+
+            public void RecordAccepted(string layer)
+            {
+                var key = layer ?? string.Empty;
+                if (!AcceptedByLayer.TryGetValue(key, out var n))
+                {
+                    n = 0;
+                }
+
+                AcceptedByLayer[key] = n + 1;
             }
         }
 
@@ -83,13 +114,14 @@ namespace PosCounter.Net.Engine
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null)
             {
-                return new PosCountResult { Rows = Array.Empty<PosRow>() };
+                return new PosCountResult { Rows = ArrayCompat.Empty<PosRow>() };
             }
 
             var result = new PosCountResult();
             Accumulator acc = null;
             var typeCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             var samples = new List<string>();
+            var sw = Stopwatch.StartNew();
 
             using (doc.LockDocument())
             {
@@ -113,7 +145,7 @@ namespace PosCounter.Net.Engine
                 }
                 catch
                 {
-                    impliedSelection = Array.Empty<ObjectId>();
+                    impliedSelection = ArrayCompat.Empty<ObjectId>();
                 }
 
                 // Palette-driven UX (required):
@@ -132,7 +164,7 @@ namespace PosCounter.Net.Engine
                     if (IsInLayoutViewport())
                     {
                         var vp = TrySelectInViewportPolygon(doc.Editor);
-                        sourceIds = vp.Item1 ?? Array.Empty<ObjectId>();
+                        sourceIds = vp.Item1 ?? ArrayCompat.Empty<ObjectId>();
                         result.UsedViewportSelection = vp.Item2;
                         result.IncludedPaperSpace = false;
                         result.SourceDescription = "активный viewport";
@@ -147,7 +179,7 @@ namespace PosCounter.Net.Engine
                 }
                 else
                 {
-                    sourceIds = impliedSelection ?? Array.Empty<ObjectId>();
+                    sourceIds = impliedSelection ?? ArrayCompat.Empty<ObjectId>();
                     if (sourceIds.Length > 0)
                     {
                         result.SourceDescription = "выделение";
@@ -157,22 +189,34 @@ namespace PosCounter.Net.Engine
                     {
                         result.SourceDescription = "нет выделения";
                         result.SourceObjectCount = 0;
-                        result.Rows = Array.Empty<PosRow>();
+                        result.Rows = ArrayCompat.Empty<PosRow>();
+                        sw.Stop();
+                        result.CountElapsedMs = sw.ElapsedMilliseconds;
                         return result;
                     }
                 }
 
                 if (sourceIds.Length == 0)
                 {
-                    result.Rows = Array.Empty<PosRow>();
+                    result.Rows = ArrayCompat.Empty<PosRow>();
+                    sw.Stop();
+                    result.CountElapsedMs = sw.ElapsedMilliseconds;
                     return result;
                 }
 
                 acc = new Accumulator();
                 var stackGuard = new HashSet<ObjectId>();
+                var diag = new CountDiagnostics();
 
                 using (var tr = doc.Database.TransactionManager.StartTransaction())
                 {
+                    var geoIndex = CalloutMarkGate.BuildIndex(tr, sourceIds);
+                    if (result.UsedViewportSelection)
+                    {
+                        var vpPolygon = BuildActiveViewportPolygon(doc.Editor);
+                        CalloutMarkGate.PopulateViewportGeometry(doc.Editor, tr, geoIndex, vpPolygon);
+                    }
+
                     foreach (var id in sourceIds.Distinct())
                     {
                         if (!IsUsableId(id))
@@ -222,12 +266,18 @@ namespace PosCounter.Net.Engine
                             // ignore debug collection
                         }
 
-                        ProcessEntity(entity, entity.Layer, acc, tr, stackGuard, extractNumbersOnly);
+                        ProcessEntity(entity, entity.Layer, acc, tr, stackGuard, extractNumbersOnly, geoIndex, diag);
                     }
+
+                    result.GeoCircleCount = geoIndex.Circles.Count;
+                    ApplyDiagnostics(result, diag);
 
                     tr.Commit();
                 }
             }
+
+            sw.Stop();
+            result.CountElapsedMs = sw.ElapsedMilliseconds;
 
             // Outside LockDocument: ToRows / UI prep only touches managed heaps; avoids host crashes seen right after a heavy command+lock.
             if (acc != null)
@@ -317,7 +367,7 @@ namespace PosCounter.Net.Engine
                 // ignored
             }
 
-            return Array.Empty<ObjectId>();
+            return ArrayCompat.Empty<ObjectId>();
         }
 
         private static bool IsUsableId(ObjectId id)
@@ -394,12 +444,13 @@ namespace PosCounter.Net.Engine
                 var polygon = BuildActiveViewportPolygon(editor);
                 if (polygon == null || polygon.Count < 3)
                 {
-                    return Tuple.Create(Array.Empty<ObjectId>(), false);
+                    return Tuple.Create(ArrayCompat.Empty<ObjectId>(), false);
                 }
 
                 var filter = new SelectionFilter(new[]
                 {
                     // Legacy filter (NO MLEADER)
+                    // Geometry for C1/C4 is loaded once per run (see CalloutMarkGate.PopulateViewportGeometry).
                     new TypedValue((int)DxfCode.Start, "TEXT,MTEXT,INSERT,ATTRIB")
                 });
 
@@ -415,11 +466,11 @@ namespace PosCounter.Net.Engine
                     return Tuple.Create(window.Value.GetObjectIds(), true);
                 }
 
-                return Tuple.Create(Array.Empty<ObjectId>(), false);
+                return Tuple.Create(ArrayCompat.Empty<ObjectId>(), false);
             }
             catch
             {
-                return Tuple.Create(Array.Empty<ObjectId>(), false);
+                return Tuple.Create(ArrayCompat.Empty<ObjectId>(), false);
             }
         }
 
@@ -466,22 +517,24 @@ namespace PosCounter.Net.Engine
             Accumulator acc,
             Transaction tr,
             HashSet<ObjectId> stackGuard,
-            bool extractNumbersOnly)
+            bool extractNumbersOnly,
+            CalloutMarkGate.GeoIndex geoIndex,
+            CountDiagnostics diag)
         {
             switch (entity)
             {
                 case AttributeReference attr:
-                    ProcessTextValue(attr.TextString, effectiveLayer, acc, attr.ObjectId, extractNumbersOnly);
+                    ProcessTextValue(attr.TextString, effectiveLayer, acc, attr.ObjectId, extractNumbersOnly, geoIndex, attr.Position, attr.Height, diag);
                     break;
                 case DBText dbText:
-                    ProcessTextValue(dbText.TextString, effectiveLayer, acc, dbText.ObjectId, extractNumbersOnly);
+                    ProcessTextValue(dbText.TextString, effectiveLayer, acc, dbText.ObjectId, extractNumbersOnly, geoIndex, dbText.Position, dbText.Height, diag);
                     break;
                 case MText mText:
                     // Legacy behavior: use Contents directly
-                    ProcessTextValue(mText.Contents, effectiveLayer, acc, mText.ObjectId, extractNumbersOnly);
+                    ProcessTextValue(mText.Contents, effectiveLayer, acc, mText.ObjectId, extractNumbersOnly, geoIndex, mText.Location, mText.TextHeight, diag);
                     break;
                 case BlockReference br:
-                    ProcessBlockReference(br, effectiveLayer, acc, tr, stackGuard, extractNumbersOnly);
+                    ProcessBlockReference(br, effectiveLayer, acc, tr, stackGuard, extractNumbersOnly, geoIndex, diag);
                     break;
             }
         }
@@ -493,25 +546,27 @@ namespace PosCounter.Net.Engine
             Transaction tr,
             HashSet<ObjectId> stackGuard,
             bool extractNumbersOnly,
-            ObjectId highlightSourceId)
+            ObjectId highlightSourceId,
+            CalloutMarkGate.GeoIndex geoIndex,
+            CountDiagnostics diag)
         {
             switch (entity)
             {
                 case AttributeReference attr:
                     // AttributeReference belongs to the block instance; its own handle is safe to highlight.
-                    ProcessTextValue(attr.TextString, effectiveLayer, acc, attr.ObjectId, extractNumbersOnly);
+                    ProcessTextValue(attr.TextString, effectiveLayer, acc, attr.ObjectId, extractNumbersOnly, geoIndex, attr.Position, attr.Height, diag);
                     break;
                 case DBText dbText:
-                    ProcessTextValue(dbText.TextString, effectiveLayer, acc, highlightSourceId, extractNumbersOnly);
+                    ProcessTextValue(dbText.TextString, effectiveLayer, acc, highlightSourceId, extractNumbersOnly, geoIndex, dbText.Position, dbText.Height, diag);
                     break;
                 case MText mText:
                     // Legacy behavior: use Contents directly
-                    ProcessTextValue(mText.Contents, effectiveLayer, acc, highlightSourceId, extractNumbersOnly);
+                    ProcessTextValue(mText.Contents, effectiveLayer, acc, highlightSourceId, extractNumbersOnly, geoIndex, mText.Location, mText.TextHeight, diag);
                     break;
                 case BlockReference br:
                     // BlockReference inside a block *definition* is not a real instance on the drawing.
                     // Keep binding highlight to the outer instance (highlightSourceId).
-                    ProcessBlockDefinition(br.BlockTableRecord, effectiveLayer, acc, tr, stackGuard, extractNumbersOnly, highlightSourceId);
+                    ProcessBlockDefinition(br.BlockTableRecord, effectiveLayer, acc, tr, stackGuard, extractNumbersOnly, highlightSourceId, geoIndex, diag);
                     break;
             }
         }
@@ -522,7 +577,9 @@ namespace PosCounter.Net.Engine
             Accumulator acc,
             Transaction tr,
             HashSet<ObjectId> stackGuard,
-            bool extractNumbersOnly)
+            bool extractNumbersOnly,
+            CalloutMarkGate.GeoIndex geoIndex,
+            CountDiagnostics diag)
         {
             foreach (ObjectId attrId in blockRef.AttributeCollection)
             {
@@ -533,12 +590,12 @@ namespace PosCounter.Net.Engine
                 }
 
                 var attrLayer = ResolveLayer(attr.Layer, insertLayer);
-                ProcessTextValue(attr.TextString, attrLayer, acc, attr.ObjectId, extractNumbersOnly);
+                ProcessTextValue(attr.TextString, attrLayer, acc, attr.ObjectId, extractNumbersOnly, geoIndex, attr.Position, attr.Height, diag);
             }
 
             // IMPORTANT for highlight: entities inside block definition don't have usable handles for selection.
             // Bind all definition-derived matches to the *instance* (blockRef.ObjectId).
-            ProcessBlockDefinition(blockRef.BlockTableRecord, insertLayer, acc, tr, stackGuard, extractNumbersOnly, blockRef.ObjectId);
+            ProcessBlockDefinition(blockRef.BlockTableRecord, insertLayer, acc, tr, stackGuard, extractNumbersOnly, blockRef.ObjectId, geoIndex, diag);
         }
 
         private static void ProcessBlockDefinition(
@@ -548,7 +605,9 @@ namespace PosCounter.Net.Engine
             Transaction tr,
             HashSet<ObjectId> stackGuard,
             bool extractNumbersOnly,
-            ObjectId highlightSourceId)
+            ObjectId highlightSourceId,
+            CalloutMarkGate.GeoIndex geoIndex,
+            CountDiagnostics diag)
         {
             if (blockRecordId.IsNull || stackGuard.Contains(blockRecordId))
             {
@@ -575,17 +634,17 @@ namespace PosCounter.Net.Engine
                     var nestedLayer = ResolveLayer(entity.Layer, insertLayer);
                     if (entity is AttributeDefinition attDef)
                     {
-                        ProcessTextValue(attDef.TextString, nestedLayer, acc, highlightSourceId, extractNumbersOnly);
+                        ProcessTextValue(attDef.TextString, nestedLayer, acc, highlightSourceId, extractNumbersOnly, geoIndex, attDef.Position, attDef.Height, diag);
                         continue;
                     }
 
                     if (entity is BlockReference nestedRef)
                     {
-                        ProcessBlockDefinition(nestedRef.BlockTableRecord, nestedLayer, acc, tr, stackGuard, extractNumbersOnly, highlightSourceId);
+                        ProcessBlockDefinition(nestedRef.BlockTableRecord, nestedLayer, acc, tr, stackGuard, extractNumbersOnly, highlightSourceId, geoIndex, diag);
                         continue;
                     }
 
-                    ProcessEntity(entity, nestedLayer, acc, tr, stackGuard, extractNumbersOnly, highlightSourceId);
+                    ProcessEntity(entity, nestedLayer, acc, tr, stackGuard, extractNumbersOnly, highlightSourceId, geoIndex, diag);
                 }
             }
             finally
@@ -609,18 +668,45 @@ namespace PosCounter.Net.Engine
             string entityLayer,
             Accumulator acc,
             ObjectId sourceId,
-            bool extractNumbersOnly)
+            bool extractNumbersOnly,
+            CalloutMarkGate.GeoIndex geoIndex,
+            Point3d textPos,
+            double textHeight,
+            CountDiagnostics diag)
         {
             if (extractNumbersOnly)
             {
-                var position = ExtractPositionNumber(textValue);
+                var sanitized = SpecGrid.MTextPlainText.SanitizeRawContents(textValue);
+                if (string.IsNullOrWhiteSpace(sanitized))
+                {
+                    return;
+                }
+
+                var position = ExtractPositionNumber(sanitized);
                 if (!position.HasValue)
                 {
                     return;
                 }
 
+                if (diag != null)
+                {
+                    diag.SeenDigits++;
+                }
+
                 var layer = GetBaseLayer(entityLayer);
-                acc.Increment(layer, position.Value.ToString(), sourceId);
+                var pt = new Point2d(textPos.X, textPos.Y);
+                var markText = position.Value.ToString(CultureInfo.InvariantCulture);
+                if (!CalloutMarkGate.ShouldCountAsCalloutMark(pt, textHeight, geoIndex, diag?.GateStats))
+                {
+                    return;
+                }
+
+                if (diag != null)
+                {
+                    diag.RecordAccepted(layer);
+                }
+
+                acc.Increment(layer, markText, sourceId);
                 return;
             }
 
@@ -687,6 +773,34 @@ namespace PosCounter.Net.Engine
             }
 
             return value >= 1 && value <= 10000 ? value : (int?)null;
+        }
+
+        private static void ApplyDiagnostics(PosCountResult result, CountDiagnostics diag)
+        {
+            if (result == null || diag == null)
+            {
+                return;
+            }
+
+            result.SeenDigits = diag.SeenDigits;
+            result.RejectC4 = diag.GateStats.RejectC4;
+            result.LayerCount = diag.AcceptedByLayer.Count;
+            result.LayerSample = FormatLayerSample(diag.AcceptedByLayer);
+        }
+
+        private static string FormatLayerSample(Dictionary<string, int> acceptedByLayer)
+        {
+            if (acceptedByLayer == null || acceptedByLayer.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            var parts = acceptedByLayer
+                .OrderByDescending(kv => kv.Value)
+                .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+                .Take(8)
+                .Select(kv => kv.Key + ":" + kv.Value.ToString(CultureInfo.InvariantCulture));
+            return string.Join(",", parts);
         }
 
         private static string GetBaseLayer(string layer)

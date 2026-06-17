@@ -19,22 +19,16 @@
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
         ],
         "originalTargetFrameworks": [
-          "net46",
-          "net8.0-windows"
+          "net452"
         ],
         "sources": {
           "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
-          "net46": {
-            "framework": "net46",
-            "targetAlias": "net46",
-            "projectReferences": {}
-          },
-          "net8.0-windows": {
-            "framework": "net8.0-windows7.0",
-            "targetAlias": "net8.0-windows",
+          "net452": {
+            "framework": "net452",
+            "targetAlias": "net452",
             "projectReferences": {}
           }
         },
@@ -51,9 +45,9 @@
         "SdkAnalysisLevel": "10.0.300"
       },
       "frameworks": {
-        "net46": {
-          "framework": "net46",
-          "targetAlias": "net46",
+        "net452": {
+          "framework": "net452",
+          "targetAlias": "net452",
           "dependencies": {
             "Microsoft.NETFramework.ReferenceAssemblies": {
               "suppressParent": "All",
@@ -61,7 +55,7 @@
               "version": "[1.0.3, )",
               "autoReferenced": true
             },
-            "Microsoft.NETFramework.ReferenceAssemblies.net46": {
+            "Microsoft.NETFramework.ReferenceAssemblies.net452": {
               "suppressParent": "All",
               "target": "Package",
               "version": "[1.0.3, )"
@@ -73,30 +67,6 @@
             }
           },
           "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.300\\RuntimeIdentifierGraph.json"
-        },
-        "net8.0-windows": {
-          "framework": "net8.0-windows7.0",
-          "targetAlias": "net8.0-windows",
-          "imports": [
-            "net461",
-            "net462",
-            "net47",
-            "net471",
-            "net472",
-            "net48",
-            "net481"
-          ],
-          "assetTargetFallback": true,
-          "warn": true,
-          "frameworkReferences": {
-            "Microsoft.NETCore.App": {
-              "privateAssets": "all"
-            },
-            "Microsoft.WindowsDesktop.App": {
-              "privateAssets": "none"
-            }
-          },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.300/PortableRuntimeIdentifierGraph.json"
         }
       }
     }

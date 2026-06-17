@@ -135,7 +135,7 @@ namespace PosCounter.Net.Services
 
                 if (ids.Length == 0)
                 {
-                    doc.Editor.SetImpliedSelection(Array.Empty<ObjectId>());
+                    doc.Editor.SetImpliedSelection(ArrayCompat.Empty<ObjectId>());
                     return 0;
                 }
 
@@ -199,7 +199,7 @@ namespace PosCounter.Net.Services
                     return result;
                 }
 
-                var sourceIds = Array.Empty<ObjectId>();
+                var sourceIds = ArrayCompat.Empty<ObjectId>();
                 var mode = settings.Mode ?? "layer";
                 if (mode == "selection")
                 {
@@ -298,7 +298,7 @@ namespace PosCounter.Net.Services
                 return implied.Value.GetObjectIds();
             }
 
-            return Array.Empty<ObjectId>();
+            return ArrayCompat.Empty<ObjectId>();
         }
 
         private CountAccumulator RunCount(
@@ -727,7 +727,7 @@ namespace PosCounter.Net.Services
                 var polygon = BuildActiveViewportPolygon(editor);
                 if (polygon == null || polygon.Count < 3)
                 {
-                    return Tuple.Create(Array.Empty<ObjectId>(), false);
+                    return Tuple.Create(ArrayCompat.Empty<ObjectId>(), false);
                 }
 
                 var filter = new SelectionFilter(new[]
@@ -747,11 +747,11 @@ namespace PosCounter.Net.Services
                     return Tuple.Create(window.Value.GetObjectIds(), true);
                 }
 
-                return Tuple.Create(Array.Empty<ObjectId>(), false);
+                return Tuple.Create(ArrayCompat.Empty<ObjectId>(), false);
             }
             catch
             {
-                return Tuple.Create(Array.Empty<ObjectId>(), false);
+                return Tuple.Create(ArrayCompat.Empty<ObjectId>(), false);
             }
         }
 

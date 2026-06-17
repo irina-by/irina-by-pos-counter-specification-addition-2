@@ -189,7 +189,229 @@
 > Правка: добавлен `using Autodesk.AutoCAD.ApplicationServices` в `TableGrid.cs`.
 > Результат: ЗАРАБОТАЛО (ожидает пересборки в VS); если ошибка останется — проверить `build\AutoCAD.props` и путь к AcMgd.dll.
 
-
 > [2026-06-17] Задача: актуализировать factual_program_architecture.plan.md; оставить один план.
 > Правка: план обновлён (qty видимые, CMD инженера, inference, сборки); удалены fix_qty, engineer_cmd_logs, ac2016_*, poscounter_kit планы; DEVELOPER.md — ссылки только на factual_plan.
 > Результат: ГОТОВО — единственный план `.cursor/plans/factual_program_architecture.plan.md`.
+
+> [2026-06-10] Задача: VS net46 — «Имя qtyScores не существует в текущем контексте».
+> Причина: в `TryInferColumnsFromData` вызов `FormatInferenceColQtyScores(..., qtyScores)` без объявления массива.
+> Правка: `var qtyScores = new int[cols];` и заполнение в цикле поиска ColQty.
+> Результат: ЗАРАБОТАЛО (ожидает пересборки в VS).
+
+> [2026-06-10] Задача: план ac2016_colqty_fix этап 2 — ColQty=-1 на AC 2016 при рабочих именах/марках (та же net46 DLL в AC 2026 OK).
+> Диагноз: pass1 шапка -1/-1/-1; inference Mark/Name OK; текст «Кол.» не в top-band/CellText на API 2016; col4 — числовой столбец.
+> Правка: `TryResolveMissingColQty` (simple01→allTexts→numeric); `DetectHeaderSimpleRows01`; `DetectColQtyFromAllTexts`+`TryGetHeaderRegionY`; `TryInferColQtyFromNumericColumn`; `AssignCellsHeader` ExtentsTop fallback; MText/DBText HeaderY=верх bbox; `ColQtySource`; `RebindScopeKeysAndNames`+inference вызывают fallback; CMD `источник ColQty=` в ИТОГ. Docs: DEVELOPER, INSTRUCTION_ENGINEER §8.1; план `.cursor/plans/fix_ac2016_spec_recognition_stage2.plan.md`.
+> Результат: КОД ГОТОВ — сборка net46 на ПК с AC 2016 (`build-ac2016.cmd`); ручной тест: ожидаем `ColQty=4 источник=numeric`, `WriteQty записано>0`; регрессия AC 2026 с `dll 2016\` — ожидает инженера.
+
+> [2026-06-10] Задача: совместимость с AutoCAD 2016 SP1 (M.49.0, R20.1, .NET Framework 4.5.2).
+> Причина: сборка net46 требует .NET 4.6+; на AC 2016 SP1 встроен CLR 4.5.2 — NETLOAD мог не загружать DLL.
+> Правка: `TargetFrameworks` net46→**net452**; ReferenceAssemblies net452; ValueTuple `lib\netstandard1.0`; `build-ac2016.cmd` -f net452; баннер CMD `(net452)`; docs BUILD/DEVELOPER/INSTRUCTION_ENGINEER/README/СБОРКА_VS_AC2016; план `.cursor/plans/ac2016_sp1_net452.plan.md`.
+> Результат: КОД ГОТОВ — пересборка на ПК с AC 2016 SP1; ожидает инженера: NETLOAD → `(net452)` → спецификация.
+
+> [2026-06-10] Задача: VS net452 — CS0117 «Array не содержит Empty» (PosCounterEngine, PaletteHost, PosCounterService).
+> Причина: `Array.Empty<T>()` появился в .NET 4.6; целевой framework net452 (.NET 4.5.2).
+> Правка: `ArrayCompat.cs` + замена `Array.Empty` → `ArrayCompat.Empty` в Commands, PaletteHost, PosCounterService, PosCounterEngine, SpecGridService, PosCounterControl; docs BUILD.
+> Результат: ЗАРАБОТАЛО (ожидает пересборки в VS / build-ac2016.cmd).
+
+> [2026-06-10] Задача: план ac2016_dbtext_header этап 3 — ColQty=-1 на AC 2016, шапка DBText (TEXT), top-band видит данные, col4=17 по числам.
+> Правка: `DetectHeaderByDbTextHeaderBand` (полоса GridYs, короткий DBText/MText, `ColQtySource=dbTextBand`); `CreateTextSampleFromDbText` Header=AlignmentPoint, Data=ExtentsTop; `AssignCellsHeader` цепочка Align→ExtentsTop; `TryInferColQtyFromNumericColumn` + `CountQtyValuesInColumnTexts` по AllTexts; `BuildColQtyFallbackDiagnostic`; баннер NETLOAD `build=`; `[POSC-DIAG]` в SpecGridService/ReportDetectedHeader; docs DEVELOPER/INSTRUCTION_ENGINEER; план `.cursor/plans/fix_ac2016_dbtext_header.plan.md`.
+> Результат: КОД ГОТОВ — сборка на ПК с AC 2016 (`build-ac2016.cmd`); на CI-машине без AcMgd.dll сборка net452 не запускалась; ожидает инженера: `ColQty=4 источник=numeric` или `dbTextBand`, `WriteQty записано>0`.
+
+> [2026-06-10] Задача: регрессия имён/qty после этапа 3 — табл.2 марки 60–69 пустые, ColQty=4 (масса), склейка Обозначение+Наименование, qty не в первой суб-ячейке.
+> Диагноз: pass2 `DataY=ExtentsTop` сдвигал Row марок; numeric выбрал col4; neighbor fallback тянул col1.
+> Правка: `DataY=AlignmentPoint` pass2; `AssignCellsData` Align→Data; `ColDesignation`+`IsTextInNameColumn`; убран `ResolveNameFromNeighborColumns` в col1; `ApplyStandardColumnLayout`/`TryPreferQtyColumnAfterName` ColQty=ColName+1; `ColumnLooksLikeMassData`; `IsSectionHeaderRow` «Продолжение»; `KeyToRowMarkSampleDiag`+`WriteQtyDiagLines`; план `.cursor/plans/fix_name_qty_regression.plan.md`.
+> Результат: КОД ГОТОВ — пересборка `build-ac2016.cmd`; ожидает инженера: KeyToRowMark 60–69, ColQty=3, имена только col2, WriteQty rowTop+палитра.
+
+> [2026-06-10] Задача: план fix_colqty_gt20_names — табл.1 ColQty=4→3; ГТ-20 имя только col2 (RU+EN), без ГОСТ/TB100 из col1.
+> Правка: `ApplyMandatoryColQtyLayout` (схема 0/1/2/3); `LooksLikeDesignationText`; `BuildCellMatrix` col2-only; `ResolveNameForKey` без cell-only при ColDesignation; `TryGetMTextBounds` Data=Location; `ApplyStandardColumnLayout` перед WriteQty; `ColQtyLayoutFixDiag`/`NameCol2DiagLines`; docs DEVELOPER.
+> Результат: КОД ГОТОВ — сборка net452 на ПК с AC 2016 (`build-ac2016.cmd`); на CI-машине без AcMgd.dll не собиралось; ожидает инженера: табл.1 `ColQty=3 layout`, ГТ-20 марка 1 RU+EN без ГОСТ, табл.2 без регрессии.
+
+> [2026-06-10] Задача: план fix_gt-20_bleed_colqty — bleed имён 4–6, ColQty=4, qty не в col3/не из палитры визуально.
+> Правка: запланировано — useCellTextOnly как OLD; nextKeyTop cap; numeric prefer col3; ResolveQtyInsertY верхняя суб-ячейка; ИТОГ layout+ВНИМАНИЕ.
+> Результат: ОЖИДАЕТ РЕАЛИЗАЦИИ — пользователь «готов», но plan mode заблокировал правки .cs; нужен agent mode.
+
+> [2026-06-10] Задача: план fix_gt-20_bleed_colqty — реализация (лог ColQty=-1, WriteQty=0, bleed имён, qty не из палитры).
+> Правка: `useCellTextOnly` без gate ColDesignation; `GetNextKeyRowExclusive` cap; `TryInferColQtyFromNumericColumn` prefer col3; `ResolveQtyInsertY` rowTop+1; `DbTextHeaderMaxPlainLen=60`; `LooksLikeDesignationText` в dbText band; `AppendHeaderTextPart` по строкам; `ReportScopeSummaryDiagnostic` layout+ВНИМАНИЕ; WriteQty diag Y; docs DEVELOPER/INSTRUCTION_ENGINEER.
+> Результат: КОД ГОТОВ — сборка на ПК с AC 2016 (`build-ac2016.cmd` или VS net452); синхронизировать Yandex→Salnikava.I OneDrive; NETLOAD `bin\x64\Release\net452`; ожидает инженера: `ColQty=3 источник=layout`, `WriteQty key=1 qty=1`, имена ГТ-20 марки 1/4/5/6 без bleed.
+
+> [2026-06-11] Задача: сборка на рабочем ПК Salnikava.I — ошибка дубликата PaletteHost.
+> Правка: на Yandex один PaletteHost.cs; в СБОРКА_VS_AC2016.md добавлен раздел: поиск двух PaletteHost*.cs, чистая перекопировка папки, очистка bin/obj.
+> Результат: инструкция для инженера — не баг Yandex-папки, а наложение копий при переносе.
+
+> [2026-06-11] Задача: сборка — System.ValueTuple 4.5.0 не найден (NuGet/длинный путь OneDrive).
+> Правка: `lib\netstandard1.0\System.ValueTuple.dll` в репозитории; `PosCounter.Net.csproj` fallback `ValueTupleDllPath`; `NuGet.local.props`; СБОРКА_VS_AC2016.md.
+> Результат: сборка net452 без NuGet restore если есть lib\; при NETLOAD копировать ValueTuple.dll рядом с плагином.
+
+> [2026-06-11] Задача: повтор ошибки PaletteHost при сборке.
+> Правка: скрипт `build\verify-no-duplicate-sources.ps1`; маркер `POSC-SINGLE-FILE` в PaletteHost.cs; уточнена СБОРКА_VS_AC2016.md (VS Обозреватель — один файл).
+> Результат: на рабочем ПК запустить скрипт; при [OK] — Clean + Rebuild; иначе чистая перекопировка PosCounter.Net с Yandex.
+
+> [2026-06-10] Задача: план diag_logs_colqty_names — расширить CMD-диагностику + фикс continuation header.
+> Правка: `SpecGridLog.WriteTrace`/`WriteDiagTail`/budget=120/`FormatDllBuildStamp`; `[COLQTY]` в ApplyStandardColumnLayout/TryPrefer/TryResolve/infer; `[HEADER]` ReportHeaderTraceDiagnostic; `[NAME]` key 1–7; `[WRITEQTY]` TraceWriteQty; `BuildHeaderOnlyColumnText` отсев NameScore при inference; чеклист копирования в СБОРКА_VS_AC2016.md; docs.
+> Результат: КОД ГОТОВ — копировать PosCounter.Net на рабочий ПК Salnikava.I, Release x64 net452, NETLOAD свежей DLL; в CMD искать `[COLQTY] layout fix →3`, `[NAME] key=1 cellOnly=…`, `[WRITEQTY] targetY=…`; прислать лог для этапа 2.
+
+> [2026-06-11] Задача: план fix_gt20_names_qty (лог build=18:48) — bleed имён ГТ-20, qty не в первую суб-ячейку, шум numeric col=0, пустые имена 52–57/105–109.
+> Правка: `RebindScopeKeysAndNames` gate ColMark/ColName; numeric skip mark column; `FindQtyTextInCell` rowTop+1; `UpsertQtyText` skip-far-entY+create; `ResolveNameForKey` useCellTextFromBlock без supplement при cellJoined≥20; supplement cap nextKeyTop; `DescribeHeaderColumn` «— (продолжение)»; `[NAME]` key 52–57/105–109; docs + fix_gt20_names_qty_IMPLEMENTED.md.
+> Результат: КОД ГОТОВ — ожидает инженера: ГТ-20 марка 1 RU+EN, марки 4–6 без bleed, `[WRITEQTY] key=1 qty=1`, нет `numeric col=0` до inference; прислать CMD с `[NAME]` и `[WRITEQTY]`.
+
+> [2026-06-12] Задача: план header_anchor_schema — якорь шапки, наследование ColMark/ColName/ColQty для продолжений.
+> Правка: `SpecColumnSchema`; `SpecGridSession.ColumnSchema`; `TryLockColumnSchema` (pass1); `TryApplyInheritedColumnSchema`; `ColumnsInheritedFromSchema`; `ProcessInferColumnsFallback`; CMD `[SCHEMA]` + «столбцы от эталона»; docs INSTRUCTION_ENGINEER/DEVELOPER.
+> Результат: КОД ГОТОВ — таблица 1 со шапкой → `[SCHEMA] locked`; продолжения → `inherited` без inference; ожидает инженера: пересборка NETLOAD, проверка 398+214.
+
+> [2026-06-12] Задача: план fix_schema_inherit_table2 — табл.2 пустая (59 obj, X-mismatch 112k vs 134k).
+> Правка: `TryAlignScopeColumnsToAnchorSchema` (центры X-полос + offset); `TryApplyInheritedColumnSchema` → `inherited`/`aligned` + `failReason`; `SpecGridService` `[SCHEMA] inherit-fail reason=` + «рамка слишком мала» + fallback `TryInferColumnsFromData`; docs INSTRUCTION_ENGINEER/DEVELOPER; план `fix_schema_inherit_table2_IMPLEMENTED.md`.
+> Результат: КОД ГОТОВ — ожидает инженера: пересборка net452, NETLOAD; табл.1 552 obj → locked; табл.2 полная ~214 → inherited/aligned + WriteQty; табл.2 59 obj → предупреждение + fallback infer.
+
+> [2026-06-12] Задача: план fix_bilingual_names_gt20_header — имена bleed RU/EN (марки 4–6), шапка ГТ-20 pass1=-1 «Марка col0 «9»», табл.2 26 obj без inherit (лог build=14:48).
+> Правка: `CapRowEndBeforeNextMarkNameLead`, ослаблен `cellOnly` + cyrillic supplement; `EnumerateDisplayNameLines` в CollectNamePartsFromCellText; `DetectHeaderByTopGridRows`, `TryGetHeaderTopTextBandY` по GridYs, `SanitizeMarkScoresForDigitOnlyHeaders`, `CanLockColumnSchemaFromPass2`; `IsContinuationPickTooSmall` (<80 obj) без infer fallback; docs DEVELOPER/INSTRUCTION_ENGINEER; планы `fix_bilingual_names_gt20_header.plan.md` + `_IMPLEMENTED.md`.
+> Результат: КОД ГОТОВ — сборка на ПК с AC 2016 (`build-ac2016.cmd`); ожидает инженера: малая таблица 98 obj (имена 1–7, `[NAME] nameLeadCap`); большая 472+полное продолжение (`[SCHEMA] locked`/`inherited`); убрать `(load "pos_counter_2016_2026")` из acad.lsp.
+
+> [2026-06-13] Задача: план diag_log_gt20 (лог build=11:41) — 9 марок missing qty (не баг WriteQty), 13 пустых имён, MText вне сетки табл.2.
+> Правка: `AssignUnassignedTextsToNameColumn` + `UnassignedNameFixLines`; вызов после `AssignCellsData` и в `RebindScopeKeysAndNames` с пересборкой `CellText`; `ResolveContinuationNameRowEnd` / `NextMarkHasStandaloneNameLead`; `ShouldLogNameRejectReason` + `[NAME] skip=…` в `AddNamePartsFromTextSample`; `ReportUnassignedTextsDiagnostic` — строки `unassigned→name`; docs DEVELOPER §20; план `diag_log_gt20_IMPLEMENTED.md`.
+> Результат: КОД ГОТОВ — пересборка net452, NETLOAD; ожидает инженера: `[POSC-DIAG] unassigned→name col=2`, `[NAME] skip=designation` для key=52, имена ≥52, WriteQty=49 без регрессии.
+
+> [2026-06-13] Задача: план авто_kv_ac2016 — универсальный KV без хардкода марок/0-2-3.
+> Правка: `MarkKeyParser` (префиксы Поз./Марка); `DetectHeaderBoundaryAndColumns` (scan 0..5, gridTokens); `ResolveNameForKey` + `AllNameRowsHaveCellText` + `PickBestNameTextForRow`; bleed `continue` + `IsUpstreamBleedFromForeignMark`; MText `DataY=ExtentsTop`; ColQty evidence-only (убран mandatory 0/2/3); `SpecDiagPolicy` + `[HEADER-SCAN][MARK][GEO][NAME][KV-SUMMARY]`; docs §21–22.
+> Результат: КОД ГОТОВ — сборка на ПК с AC 2016; ожидает инженера: `headerPath=gridTokens`, `[KV-SUMMARY]` per table, имена без регрессии, WriteQty из палитры.
+
+> [2026-06-14] Задача: сборка net452 — ошибка CS0136 в `TableGrid.cs` строка 5905.
+> Причина: в `AssignCellsData` переменная `bindY` (double, координата) и внутри того же цикла `bindY` (string, метка для лога `[GEO]`).
+> Правка: метка лога переименована в `bindYMethod`.
+> Результат: ожидает пересборки VS / `build-ac2016.cmd`.
+
+> [2026-06-14] Задача: план fix_names_qty_post-kv — универсальные имена merged-блоков, qty sub-row+стиль, палитра vs scope.
+> Правка: `ResolveNameForKey` — без nextKeyTop cap при isMerged; `HasCyrillicInMarkBlock`/`HasNameTextOwnedByKey`; cellOnly `reason=merged-block|missing-cyrillic`; `FindQtyTextInCell` rowTop only; `ResolveQtyTableTextAppearanceForScope(scope, rowTop)`; `ReportPaletteVsScopeNamesDiagnostic`; убраны `key==1`, `key<=3` diag; docs §23, INSTRUCTION §8.3; план `_IMPLEMENTED.md`.
+> Результат: КОД ГОТОВ — пересборка net452, NETLOAD; проверка: `[NAME] reason=merged-block`, `[WRITEQTY] from=colName-rowTop`, `[POSC] Палитра: ключей=N, имён=M`.
+
+> [2026-06-14] Задача: план fix_first_name_line_skip — первая строка наименования не попадает в палитру (3 строки → берутся 2-я и 3-я).
+> Причина: `IsNameContinuationRow` давала `false` для `row ≤ rowMark`; при цифре марки ниже первой строки имени (merged ColMark) первая строка ColName отсекалась как `IsSectionHeaderRow`.
+> Правка: `IsNameContinuationRow` — диапазон `[rowTop, blockEnd)`; ветка `rowTop ≤ row < rowMark` с непустым ColName; `LogNameSectionRowSkip` + trace `rowTop/rowMark/blockEnd`; docs DEVELOPER §11/§22; план `_IMPLEMENTED.md`.
+> Результат: КОД ГОТОВ — пересборка `build-ac2016.cmd`, NETLOAD; проверка ГТ-20: марки 1/5/6 — все строки имени в палитре, `[NAME] parts=3` для 3-строчных.
+
+> [2026-06-14] Задача: план fix_rowtop_header_qty — rowTop сдвигался до rowMark; bilingual шапка; RowDataStart; qty в merged 3+.
+> Причина: `ResolveNameRowTopForKey` while `rowTop++` при `IsSectionHeaderRow` до сбора имён; `AlignRowDataStartToFirstMark` min(KeyToRowMark); граница шапки — последняя H-линия, не 2-я.
+> Правка: не rowTop++ при непустом ColName; `min(KeyToRowTopSub)`; `FindHeaderEndRowByHorizontalBorders`; `[WRITEQTY] merged=`; docs §11/§22; план `_IMPLEMENTED.md`.
+> Результат: КОД ГОТОВ — пересборка net452, NETLOAD; проверка: merged N-line parts≥N, rowTop<rowMark, qty в верхней суб-ячейке.
+
+> [2026-06-14] Задача: сборка — дубликат SpecGridService / SpecPickResult / QtyTableTextAppearance (CS0101/CS0111).
+> Диагноз: на Yandex один `SpecGridService.cs` (~2206 строк, по 1 классу); ошибка на рабочем ПК — файл вставлен дважды или склеен с TableGrid (как ранее PaletteHost).
+> Правка: маркер `POSC-SINGLE-FILE-SVC` в SpecGridService.cs; `verify-no-duplicate-sources.ps1` проверяет PaletteHost + SpecGridService + вложения в TableGrid; вызов из `build-ac2016.cmd`; СБОРКА_VS_AC2016.md §SpecGridService.
+> Результат: на Yandex [OK]; на рабочем ПК — запустить verify, при [FAIL] чистая перекопировка PosCounter.Net с Yandex.
+
+> [2026-06-14] Задача: повтор ошибки сборки SpecGridService / SpecPickResult дубликат (CS0101).
+> Диагноз: на Yandex один SpecGridService.cs (verify [OK]); на рабочем ПК файл вставлен дважды или второй SpecGridService (1).cs.
+> Правка: MSBuild Target VerifyNoDuplicateSources в csproj; скрипт repair-duplicate-specgrid.ps1; подсказка в verify и СБОРКА_VS_AC2016.md.
+> Результат: на Yandex OK; на ПК сборки: repair → verify → Clean Rebuild; или перекопировать PosCounter.Net с Yandex.
+
+> [2026-06-14] Задача: план diag_first_row_after_header — только CMD-логи, где отсекается 1-я строка после шапки.
+> Правка: `[HEADER-DATA-ROW]` в gridScan, H-линиях, DetectHeader, FindFirstDataRowAfterHeaderBoundary, Rebind итог, rowTop clamp; хелперы `DescribeGridScanRowVerdict`, `LogHeaderDataRowRebindSummary`; docs §22; план `_IMPLEMENTED.md`. Логика сбора **не менялась**.
+> Результат: КОД ГОТОВ — пересборка, NETLOAD; в CMD искать `isData=false` на r=HeaderEndRow и сравнить `row[H]` с RowDataStart.
+
+> [2026-06-14] Задача: план fix_first_mark_rowdatastart — якорь шапки по цифре ColMark (пропуск первой марки в палитре).
+> Причина: `RowDataStart=3` из 2-й H-линии между блоками данных; первая цифра ColMark на row 2 отсечена `IsBindableDataText`; gridScan ложный hasMark от цифры в col массы.
+> Правка: `FindFirstMarkRowInColMark`, `ApplyMarkAnchoredHeaderBoundary` (blockTop, rule=colMark-digit); H-линии cap до firstMarkRow; `IsGridScanDataRow` только ColMark/ColQty; `HeaderTokenEndRow`, `ResolveHeaderOnlyEndRow`; docs §22; план `_IMPLEMENTED.md`. Без key==N.
+> Результат: КОД ГОТОВ — пересборка `build-ac2016.cmd`, NETLOAD; CMD: `markAnchor firstMarkRow=…`, `minKey`=мин. ключ палитры, имён столько же сколько ключей scope.
+
+> [2026-06-14] Задача: ошибки сборки после fix_mark_column_snap (switch AttributeReference, Matrix3d.Column0, ProcessBlockDefinition wcsXform).
+> Правка: `CalloutMarkGate` — `AttributeReference` перед `DBText`; масштаб круга через `MatrixUniformScale`; `PosCounterEngine` — `wcsXform` в вызове `ProcessBlockDefinition`; убран недостижимый `case BlockReference` в `ProcessEntityInBlock`.
+> Результат: ожидает пересборку build-ac2016.cmd.
+
+> Правка: `PaletteHost` → `TryBuildQtyByKeyFromVisibleRows`; `CalloutMarkGate.cs` (C2 exact-digit, C1 треугольник, C4 круг, C3 соседний текст); `SnapExactDigitMarksToColMark`, `FindFirstMarkRowFromAllTexts`, `LooksLikeDesignationText` ОСТ; `CellIndex` prefer exact-digit; docs §20/§23, INSTRUCTION §4.
+> Результат: КОД ГОТОВ — пересборка `build-ac2016.cmd`, NETLOAD; ручная проверка в AutoCAD по чеклисту плана.
+
+> [2026-06-14] Задача: актуализировать документацию — единый factual plan, удалить старые планы, обновить README и «Работа программы.md».
+> Правка: переписан `.cursor/plans/factual_program_architecture.plan.md` (markAnchor, SpecColumnSchema, MarkKeyParser, verify/repair, палитра vs scope); удалены 27 файлов из `.cursor/plans/`; обновлены `README.md`, `Работа программы.md`, дата в `docs/DEVELOPER.md`.
+> Результат: ЗАРАБОТАЛО — один актуальный архитектурный документ; история правок остаётся в `.cursor/DIALOGUE_LOG.md` и `docs/DEVELOPER.md`.
+
+> [2026-06-14] Задача: сборка fix_layout_selection — CS0104 Exception неоднозначна (Runtime vs System).
+> Правка: `Commands.cs` → `catch (System.Exception ex)`.
+> Результат: ожидает пересборку build-ac2016.cmd.
+
+> [2026-06-14] Задача: R6025 pure virtual function call при ЗАПУСТИТЬ (AC 2016).
+> Причина: `SelectImplied` с WPF-потока (`PreviewMouseDown`); `Dispose` копий после `ProxyEntity.Explode`.
+> Правка: убран `PreviewMouseDown`; `TrySnapshotPickFirstFromPalette` через `ExecuteInApplicationContext`; Explode без Dispose копий.
+> Результат: ожидает пересборку и проверку NETLOAD.
+
+> [2026-06-15] Задача: собрать DLL для AutoCAD 2026 (net8.0-windows).
+> Проблемы: restore без `AutoCADSdkDirNet8` в `PosCounter.Net\build\AutoCAD.props`; CS0104 `Timer` (Forms vs Threading) в `PaletteHost`; неверный путь OUT в `build-ac2026.cmd` (`bin\x64\Release\…`).
+> Правка: `AutoCADSdkDirNet8` в props; `System.Windows.Forms.Timer`; restore в скрипте; OUT → `bin\x64\Release\net8.0-windows\`.
+> Результат: ЗАРАБОТАЛО — `dll 2026\PosCounter.Net.dll` (310 KB), сборка 0 ошибок.
+
+> [2026-06-15] Задача: оставить dll 2026, подготовить проект к ручной сборке AC 2016 (как PosCounter.Net1).
+> Правка: `build-ac2016.cmd` (корень + портативный) — verify, telemetry, `-p:Platform=x64`; `СБОРКА_РУЧНАЯ_AC2016.md`; `dll 2026\` не менялась.
+> Результат: КОД ГОТОВ — инженер копирует `PosCounter.Net` на ПК с AC 2016, Release|x64|net452, NETLOAD + ValueTuple рядом.
+
+> [2026-06-15] Задача: убрать ProxyEntityHelper — как в PosCounter.Net1, без Explode proxy СПДС.
+> Правка: удалён `ProxyEntityHelper.cs`; откат в `PosCounterEngine`, `CalloutMarkGate`, `TableGrid`; пересобран `dll 2026\`; docs DEVELOPER, Работа программы.
+> Результат: ЗАРАБОТАЛО — сборка net8.0-windows 0 ошибок; proxy в выделении снова игнорируется.
+
+> [2026-06-15] Задача: подготовить портативный проект для сборки AC 2016 как PosCounter.Net1.
+> Правка: `PosCounter.Net\build\AutoCAD.props` — только Net46; restore `-f net452`; `README_СБОРКА_AC2016.txt`, `КОПИРОВАТЬ_КАК_PosCounter.Net1.md`.
+> Результат: КОД ГОТОВ — копировать папку `PosCounter.Net` на ПК с AC 2016, `build-ac2016.cmd` или VS net452.
+
+> [2026-06-15] Задача: распознавание чертежа точь-в-точь как PosCounter.Net1.
+> Правка: из `C:\Users\user\Desktop\1\PosCounter.Net1` скопированы PosCounterEngine, TableGrid, CellIndex, MTextPlainText, PaletteHost, Commands, PosCounterControl.xaml.cs; удалён CalloutMarkGate.cs (фильтры выносок C1–C4, geoIndex, PickFirst snapshot, StatusHint proxy — убраны).
+> Результат: ЗАРАБОТАЛО — хеши файлов = эталон; net8.0-windows пересобран в dll 2026; net452 — на ПК с AC 2016.
+
+> [2026-06-15] Задача: сборка только вручную (VS) — удалить скрипты .cmd.
+> Правка: удалены `build-ac2016.cmd`, `build-ac2026.cmd`; обновлены README, СБОРКА_РУЧНАЯ, DEVELOPER, INSTRUCTION_ENGINEER.
+> Результат: ЗАРАБОТАЛО.
+
+> [2026-06-15] Задача: в «Кол.» писались не те qty (не из палитры, сброс не помогал).
+> Причина: `TryBuildQtyByKeyForWriteback` брал `_lastCountRows` (все строки), а не видимые в палитре.
+> Правка: `PaletteHost` → `TryBuildQtyByKeyFromVisibleRows` (только то, что видно в палитре после фильтров).
+> Результат: КОД ГОТОВ — пересборка, проверка WriteQty в CMD.
+
+> [2026-06-15] Задача: документация — сравнение с PosCounter.Net1, обновить factual plan, README, Работа программы.
+> Правка: `diff_vs_PosCounter.Net1.md`; обновлены factual_program_architecture, README, Работа программы (Сброс, qty видимые, сборка VS).
+> Результат: ЗАРАБОТАЛО.
+
+> [2026-06-16] Задача: вернуть фильтры выносок при «ЗАПУСТИТЬ» (C1 треугольник LINE, C3 соседний текст, C4 круг, C2 только голая цифра), при этом распознавание таблиц (шапка/столбцы/имена/наследование) не менять.
+> Правка: добавлен `Engine/CalloutMarkGate.cs` и подключён в `Engine/PosCounterEngine.cs` перед `acc.Increment` (геометрия рядом с текстом); `TrySelectInViewportPolygon` расширен на `LINE,CIRCLE`; `MTextPlainText.IsExactCalloutDigitText` — строгая проверка (без снятия `Поз.`/`№`) и используется в `ProcessTextValue` вместо `ExtractPositionNumber` для подсчёта выносок.
+> Результат: КОД ГОТОВ — пересборка и ручная проверка в AutoCAD по кейсам (цифра в круге/треугольник/соседний текст/«Поз. 3»).
+
+> [2026-06-16] Задача: «ЗАПУСТИТЬ» на листе (viewport) стал медленным и в командной строке появляется «Выполняется регенерация листов.».
+> Причина: выборка viewport была расширена на `LINE,CIRCLE`, из-за чего AutoCAD подбирал слишком много геометрии и запускал тяжёлую регенерацию.
+> Правка: `TrySelectInViewportPolygon` снова выбирает только `TEXT,MTEXT,INSERT,ATTRIB`; геометрия для C1/C4 (LINE/CIRCLE) добирается **локально** вокруг каждой цифры через маленькое окно поиска в `CalloutMarkGate` (без глобальной выборки по viewport).
+> Результат: КОД ГОТОВ — пересборка и проверка: «ЗАПУСТИТЬ» быстрее, C1/C4 сохраняются, нет массовой регенерации листов.
+
+> [2026-06-16] Задача: после нажатия «ЗАПУСТИТЬ» не ясно, идёт ли обработка (кажется, что «зависло»).
+> Правка: `UI/PosCounterControl.xaml.cs` — при клике «ЗАПУСТИТЬ» статус меняется на «Идёт подсчёт…», кнопка временно блокируется; после получения результата (или ошибки) кнопка снова активируется.
+> Результат: UX — понятно, что расчёт выполняется, даже если AutoCAD делает тяжёлую операцию.
+
+> [2026-06-16] Задача: спецификация «Ушко» — в столбце «Марка» вместо цифр 1–3 попадал текст «21 ОСТ…», из-за этого `markAnchor firstMarkRow` становился 4 и имена «Ушко 1/2» не попадали в палитру.
+> Причина: в одной ячейке ColMark накладывались два текста (цифра + обозначение), а защита от «дубликатов по близости» в `CellIndex.GetCellText` могла выкинуть цифру как дубликат.
+> Правка: `SpecGrid/CellIndex.cs` — **цифры‑марки** (`IsExactDigitMark`) больше не отбрасываются как «дубликат по близости» (дедуп только по точному совпадению строки). Для ColMark остаётся приоритет цифр.
+> Результат: ожидается, что `firstMarkRow` станет 1 (или 2), будут привязаны ключи 1–4, а имена «Ушко 1/2» появятся в палитре (проверка в AutoCAD).
+
+> [2026-06-16] Задача: ускорить подсчёт выносок (план ускорение_подсчёта_выносок) — убрать N× SelectCrossingWindow на каждую цифру в viewport; сохранить C1–C4.
+> Правка: `CalloutMarkGate` — `PopulateViewportGeometry` (один selection LINE,CIRCLE по viewport), пространственные buckets 15 мм, `ShouldCountAsCalloutMark` без editor/per-digit selection; `PosCounterEngine` — вызов PopulateViewportGeometry после BuildIndex, Stopwatch + GeoText/Line/Circle counts; `Commands` — `[POSC-DIAG] count source=… texts=… lines=… circles=… ms=…`; docs §18.
+> Результат: КОД ГОТОВ — пересборка Release|x64|net452, NETLOAD; проверка скорости на листе+model и кейсы C1–C4 в AutoCAD.
+
+> [2026-06-16] Задача: ошибка сборки CS0122 — `_textBuckets`/`_circleBuckets`/`_lineBuckets` недоступны из `CalloutMarkGate`.
+> Причина: в C# внешний класс не может читать private-поля вложенного `GeoIndex`.
+> Правка: методы `QueryTextNeighbors`/`QueryCircleNeighbors`/`QueryLineNeighbors` и вспомогательные `QueryBuckets`, `BucketPoint`, `EnumerateCellKeys`, `PackCell` перенесены внутрь `GeoIndex`.
+> Результат: ожидает пересборку в VS.
+
+> [2026-06-16] Задача: пропадают слои/марки в палитре после ЗАПУСТИТЬ (план все_слои_выносок) — выровнять с PosCounter.Net1.
+> Причина: подсчёт не фильтрует по Layer; отличие — `IsExactCalloutDigitText` вместо `ExtractPositionNumber`; GeoIndex без блоков.
+> Правка: `ProcessTextValue` → `SanitizeRawContents` + `ExtractPositionNumber` (как Net1); `CalloutMarkGate.BuildIndex` — рекурсия BlockReference/атрибуты; `GateStats` + layerSample в `[POSC-DIAG] count`; `ApplyRunResult` — сброс `_filterLayer`; docs §18.
+> Результат: КОД ГОТОВ — пересборка NETLOAD; сравнить с Net1 на том же чертеже, проверить C1–C4.
+
+> [2026-06-16] Задача: упростить подсчёт выносок (план упростить_подсчёт_выносок) — только C4, убрать C1/C3/LINE/TEXT индекс.
+> Правка: `CalloutMarkGate` — только `CircleAnchor` + buckets; `PopulateViewportGeometry` selection `CIRCLE`; `ShouldCountAsCalloutMark` только `IsDigitInsideCircleMarker`; `PosCounterEngine`/`Commands` — диагностика `rejectC4`, `SeenDigits`, `GeoCircleCount`; docs §18, diff_vs_PosCounter.Net1.
+> Результат: КОД ГОТОВ — пересборка Release|x64|net452, NETLOAD; проверка в AutoCAD по чеклисту (голая цифра, круг, треугольник, «дет.»).
+
+> [2026-06-16] Задача: обновить документацию (factual_program_architecture, README, INSTRUCTION_ENGINEER) — актуализация C4, СПДС не работает.
+> Правка: убраны устаревшие сведения про Explode proxy и C1–C4; явно: СПДС/proxy не поддерживается; C4 — цифра в круге не в палитре.
+> Результат: документация обновлена.
+
+> [2026-06-16] Задача: переписать INSTRUCTION_ENGINEER.md простым языком для инженера (не программиста).
+> Правка: убран технический жаргон (ColMark, SCHEMA, proxy, KV-SUMMARY и т.д.); структура по шагам; отдельно СПДС не работает, цифры в кругах, фильтры и «Кол.»; короткий раздел про сообщения в CMD.
+> [2026-06-16] Задача: оставить в CMD только краткие логи для инженера + предупреждения; баннер NETLOAD build= без изменений; остальное закомментировать.
+> Правка: `SpecGridLog.cs` — `WriteDiag`/`WriteTrace` no-op; `WriteDiagTail` → whitelist → `[POSC]`; `Commands.cs` — убрана строка AutoCAD R* после NETLOAD; `SpecGridService.cs` — закомментированы verbose `ReportDetectedHeader`, `[KV-SUMMARY]`, `ReportScopeSummaryDiagnostic`; docs INSTRUCTION_ENGINEER, README, DEVELOPER, Работа программы, factual plan.
+> Результат: КОД ГОТОВ — пересборка NETLOAD; в CMD только `[POSC]`/`[INFO]` и предупреждения.
+
+> [2026-06-17] Задача: релиз на GitHub — AC 2026 + полный комплект AC 2016 из 24322f2.
+> Правка: коммиты `1b73e59`, `f571c54`; слияние с `origin/main`; `dll 2016\` + `dll 2026\`; все 161 файл из 24322f2 в дереве.
+> Результат: ожидает `git push origin main`.
