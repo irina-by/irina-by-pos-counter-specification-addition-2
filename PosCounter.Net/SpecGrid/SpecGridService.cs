@@ -51,7 +51,9 @@ namespace PosCounter.Net.SpecGrid
                 return result;
             }
 
-            // Диагностика отключена (TABLE-GRID, QTY-LOG, ROW-DATA, QTY-UPSERT).
+            SpecGridLog.ResetDiagSession(doc);
+            var paletteKeyCount = qtyByKey?.Count ?? 0;
+            // SpecGridLog.WriteDiag(doc, $"Палитра qty: ключей={paletteKeyCount} (перед спецификацией)");
 
             if (!TryPickAllSpecificationTables(doc, out var tablePicks, out var pickError))
             {
@@ -72,10 +74,27 @@ namespace PosCounter.Net.SpecGrid
                         {
                             var hint = i > 0 ? SpecGridSession.SharedGridLayer : null;
                             var scope = TableGridBuilder.Build(i, tablePicks[i], tr, hint, log);
+                            var scopeNum = i + 1;
+                            /*
+                            SpecGridLog.WriteDiag(
+                                doc,
+                                $"Таблица {scopeNum} pass1: ColMark={scope.Pass1ColMark} ColName={scope.Pass1ColName} ColQty={scope.Pass1ColQty} topBand={scope.Pass1HeaderDetectedByTopTextBand}");
+                            */
+
                             if (scope.Valid
                                 && (scope.ColMark < 0 || scope.ColName < 0)
                                 && TableGridBuilder.TryInferColumnsFromData(scope, qtyByKey, log))
                             {
+                                /*
+                                SpecGridLog.WriteDiag(
+                                    doc,
+                                    $"Таблица {scopeNum}: fallback «столбцы по данным» (pass1: ColMark={scope.Pass1ColMark} ColName={scope.Pass1ColName} ColQty={scope.Pass1ColQty})");
+                                if (!string.IsNullOrWhiteSpace(scope.InferenceColQtyScoresSummary))
+                                {
+                                    SpecGridLog.WriteDiag(doc, scope.InferenceColQtyScoresSummary);
+                                }
+                                */
+
                                 TableGridBuilder.RebindScopeKeysAndNames(
                                     scope,
                                     scope.HorizForBind,
@@ -83,6 +102,9 @@ namespace PosCounter.Net.SpecGrid
                                     passLabel: "infer-data");
                                 TableGridBuilder.FillMarkNamesFromMergeGroupsPublic(scope, log);
                             }
+
+                            ReportUnassignedTextsDiagnostic(doc, scope, scopeNum);
+                            TableGridBuilder.ReportMarkNamesDiagnostic(doc, scope, scopeNum);
 
                             builtScopes.Add(scope);
                             if (i == 0 && !string.IsNullOrWhiteSpace(scope.GridLayer))
@@ -99,6 +121,8 @@ namespace PosCounter.Net.SpecGrid
 
                         result.QtyWritten = WriteQtyInTransaction(tr, qtyByKey, log, out var skipped);
                         result.QtySkipped = skipped;
+                        ReportWriteQtyDiagnostic(doc, builtScopes, result.QtyWritten, skipped);
+                        ReportScopeSummaryDiagnostic(doc, builtScopes);
                         tr.Commit();
                     }
 
@@ -141,6 +165,7 @@ namespace PosCounter.Net.SpecGrid
                 }
 
                 var scopeNum = scope.ScopeIndex + 1;
+                /*
                 if (scope.IsNativeAcadTable)
                 {
                     var rows = scope.CellText?.GetLength(0) ?? 0;
@@ -156,6 +181,7 @@ namespace PosCounter.Net.SpecGrid
                         doc,
                         "[POSC] Mixed selection (Table + Line), using LINE path");
                 }
+                */
 
                 var mark = DescribeHeaderColumn(scope, scope.ColMark);
                 var name = DescribeHeaderColumn(scope, scope.ColName);
@@ -168,12 +194,21 @@ namespace PosCounter.Net.SpecGrid
                     $"Кол. — {(scope.ColQty >= 0 ? $"столбец {scope.ColQty} «{qty}»" : "не найдена")}.";
                 SpecGridLog.WriteCommandLine(doc, msg);
 
+                /*
                 if (!string.IsNullOrWhiteSpace(scope.GridLayer))
                 {
                     SpecGridLog.WriteCommandLine(
                         doc,
                         $"[POSC] Сетка таблицы {scopeNum}: gridLayer=«{scope.GridLayer}» merged={scope.GridAxesMergedFromMixedLayers}");
                 }
+
+                if (scope.UnassignedTextCountAfterDataPass > 0)
+                {
+                    SpecGridLog.WriteCommandLine(
+                        doc,
+                        $"[POSC] Текстов вне ячеек сетки (таблица {scopeNum}): {scope.UnassignedTextCountAfterDataPass} из {scope.TextCount}");
+                }
+                */
 
                 if (scope.HeaderEndRow > 0 || scope.RowDataStart > 0)
                 {
@@ -182,6 +217,7 @@ namespace PosCounter.Net.SpecGrid
                         $"[POSC] Граница шапки/данных: HeaderEndRow={scope.HeaderEndRow} RowDataStart={scope.RowDataStart}");
                 }
 
+                /*
                 var refineMsg = TableGridBuilder.FormatColMarkRefineMessage(scope);
                 if (!string.IsNullOrWhiteSpace(refineMsg))
                 {
@@ -197,7 +233,11 @@ namespace PosCounter.Net.SpecGrid
                             doc,
                             $"[POSC] Марок в данных по столбцам: {markCounts} (ColMark={scope.ColMark})");
                     }
+                }
+                */
 
+                if (scope.Valid && scope.ColMark >= 0)
+                {
                     if (scope.KeyToRowMark.Count > 0)
                     {
                         var keyMap = string.Join(
@@ -257,7 +297,13 @@ namespace PosCounter.Net.SpecGrid
                         $"[POSC] Заголовок столбца Наименование не прочитан (столбец {scope.ColName}) — проверьте MText/слой в шапке.");
                 }
 
-                if (scope.ColMark < 0 || scope.ColName < 0)
+                /*
+                var needsHeaderDiag = scope.ColMark < 0
+                    || scope.ColName < 0
+                    || scope.ColumnsInferredFromData
+                    || scope.ColQty < 0;
+
+                if (needsHeaderDiag)
                 {
                     var dataHint = TableGridBuilder.FormatHeaderDataBandHint(scope);
                     if (!string.IsNullOrWhiteSpace(dataHint))
@@ -271,11 +317,20 @@ namespace PosCounter.Net.SpecGrid
                         SpecGridLog.WriteCommandLine(
                             doc,
                             $"[POSC] Диагностика шапки (таблица {scopeNum}): {diag}");
+                        SpecGridLog.WriteDiag(doc, $"Таблица {scopeNum} шапка: {diag}");
                     }
 
                     foreach (var line in TableGridBuilder.BuildHeaderTopBandDiagnostic(scope))
                     {
                         SpecGridLog.WriteCommandLine(doc, line);
+                    }
+
+                    if (scope.ColumnsInferredFromData || scope.ColQty < 0)
+                    {
+                        foreach (var line in TableGridBuilder.BuildHeaderTopBandDiagnosticHeaderCoords(scope))
+                        {
+                            SpecGridLog.WriteDiag(doc, $"Таблица {scopeNum} {line}");
+                        }
                     }
 
                     if (!scope.HeaderDetectedByTopTextBand && TableGridBuilder.IsAllHeaderGeomZero(scope))
@@ -286,7 +341,84 @@ namespace PosCounter.Net.SpecGrid
                         }
                     }
                 }
+                */
             }
+        }
+
+        private static void ReportUnassignedTextsDiagnostic(Document doc, ScopeGridResult scope, int scopeNum)
+        {
+            // Разработческая диагностика «вне сетки» — отключена.
+            /*
+            if (doc == null || scope == null || scope.UnassignedTextCountAfterDataPass <= 0)
+            {
+                return;
+            }
+
+            SpecGridLog.WriteDiag(
+                doc,
+                $"Таблица {scopeNum} вне сетки: {scope.UnassignedTextCountAfterDataPass}/{scope.TextCount}");
+            foreach (var line in TableGridBuilder.BuildUnassignedTextSamples(scope))
+            {
+                SpecGridLog.WriteDiag(doc, $"  {line}");
+            }
+            */
+        }
+
+        private static void ReportWriteQtyDiagnostic(
+            Document doc,
+            IReadOnlyList<ScopeGridResult> scopes,
+            int qtyWritten,
+            int skipped)
+        {
+            if (doc == null || scopes == null)
+            {
+                return;
+            }
+
+            foreach (var scope in scopes)
+            {
+                if (scope == null || !scope.Valid)
+                {
+                    continue;
+                }
+
+                if (scope.ColQty < 0)
+                {
+                    SpecGridLog.WriteEngineerSummary(
+                        doc,
+                        $"Таблица {scope.ScopeIndex + 1} WriteQty пропущен: ColQty=-1");
+                }
+            }
+
+            SpecGridLog.WriteDiagTail(doc, $"WriteQty итог: записано={qtyWritten}, пропущено={skipped}");
+        }
+
+        private static void ReportScopeSummaryDiagnostic(Document doc, IReadOnlyList<ScopeGridResult> scopes)
+        {
+            // ИТОГ ColMark/ColName/имена — разработческая диагностика, отключена.
+            /*
+            if (doc == null || scopes == null)
+            {
+                return;
+            }
+
+            foreach (var scope in scopes)
+            {
+                if (scope == null)
+                {
+                    continue;
+                }
+
+                var scopeNum = scope.ScopeIndex + 1;
+                var namesFilled = scope.MarkNamePairs?.Count(kv => !string.IsNullOrWhiteSpace(kv.Value)) ?? 0;
+                SpecGridLog.WriteDiag(
+                    doc,
+                    $"Таблица {scopeNum} ИТОГ: ColMark={scope.ColMark} ColName={scope.ColName} ColQty={scope.ColQty} | KeyToRowMark={scope.KeyToRowMark?.Count ?? 0} | имена={namesFilled}");
+            }
+
+            var combined = BuildCombinedMarkNames();
+            SpecGridLog.WriteDiag(doc, $"Имена в палитру (всего ключей): {combined.Count}");
+            */
         }
 
         private static string DescribeHeaderColumn(ScopeGridResult scope, int col)

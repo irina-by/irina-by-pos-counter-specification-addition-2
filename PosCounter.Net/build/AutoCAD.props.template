@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <!--
+      Скопируйте этот файл в build\AutoCAD.props и укажите СВОЙ путь к AutoCAD 2016.
+      Инструкция: build\СБОРКА_VS_AC2016.md
+    -->
+    <AutoCADSdkDirNet46>C:\Program Files\Autodesk\AutoCAD 2016\</AutoCADSdkDirNet46>
+  </PropertyGroup>
+</Project>

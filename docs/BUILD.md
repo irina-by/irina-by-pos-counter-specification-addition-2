@@ -116,7 +116,9 @@
 |--------|---------|
 | `AcMgd.dll not found` | AutoCAD 2016 не установлен **или** путь в props неверный (см. ниже) |
 | `AutoCADSdkDir is not set` | Создайте `Pos_counter addition\build\AutoCAD.props` из шаблона; перезагрузите проект в VS (закройте/откройте `.csproj`) |
-| **CS8179 / CS8137** (`ValueTuple`, `TupleElementNamesAttribute` в `CellIndex.cs`) | Для **net46** нужен NuGet **`System.ValueTuple`** — уже в `.csproj`; выполните **Восстановить пакеты** (Restore) |
+| **CS8179 / CS8137** (`ValueTuple`, `TupleElementNamesAttribute` в `CellIndex.cs`) | Для **net46** нужен NuGet **`System.ValueTuple`** — в `.csproj` явный `Reference` на `lib\net461`; выполните **Restore** |
+| **Could not find reference: System.ValueTuple 4.0.3.0** | `dotnet restore`; в `.csproj` — `GeneratePathProperty` + `$(PkgSystem_ValueTuple)\lib\net461\...` |
+| NETLOAD AC 2016: ValueTuple | В папке с DLL должен лежать **`System.ValueTuple.dll`** рядом с `PosCounter.Net.dll` |
 | **MSB4011** — повторный импорт `AutoCAD.props` | Нормально игнорируется: props подключается один раз через **`Directory.Build.props`** в корне репозитория, не дублируйте `<Import>` в `.csproj` |
 | Сборка net46, а путь ведёт на AutoCAD 2026 | В props для сборки 2016 используйте **`AutoCADSdkDirNet46`**, не Net8 |
 | Нет пункта net46 | Установите targeting pack .NET Framework 4.6 в установщике VS |
@@ -143,8 +145,8 @@ build\build-ac2016.cmd
 
 Скрипт:
 
-1. Собирает Release `net46`
-2. Кладёт копию в **`dll 2016\PosCounter.Net.dll`**
+1. `dotnet restore` + сборка Release `net46`
+2. Кладёт в **`dll 2016\`**: `PosCounter.Net.dll` и **`System.ValueTuple.dll`**
 
 ### Вариант Б — Visual Studio
 
@@ -159,10 +161,13 @@ dotnet build PosCounter.Net\PosCounter.Net.csproj -c Release -f net46
 Готовая DLL:
 
 ```
-PosCounter.Net\bin\Release\net46\PosCounter.Net.dll
+PosCounter.Net\bin\x64\Release\net46\PosCounter.Net.dll
+PosCounter.Net\bin\x64\Release\net46\System.ValueTuple.dll
 ```
 
-Скопируйте её в `dll 2016\` или загрузите через NETLOAD напрямую из `bin\Release\net46\`.
+(Если нет `x64` в пути — смотрите `bin\Release\net46\`.)
+
+Скопируйте **оба** файла в `dll 2016\` или загрузите через NETLOAD из папки сборки.
 
 ---
 
@@ -227,12 +232,30 @@ Get-ChildItem "C:\Program Files\Autodesk" -Recurse -Filter AcMgd.dll -ErrorActio
 
 1. Закройте AutoCAD или убедитесь, что старая DLL не заблокирована.
 2. **NETLOAD** → выберите:
-   - `dll 2016\PosCounter.Net.dll` — для **AutoCAD 2016–2024**
+   - `dll 2016\PosCounter.Net.dll` — для **AutoCAD 2016–2024** (в папке также `System.ValueTuple.dll`)
    - `dll 2026\PosCounter.Net.dll` — для **AutoCAD 2025+**
-3. Палитра откроется **сама** (после NETLOAD).
+3. В CMD: `[POSC] PosCounter.Net … (net46)` или `(net8.0-windows)`; палитра откроется **сама**.
 4. При необходимости снова: команда **POSC**.
 
 **Важно:** DLL для 2016 (`net46`) **нельзя** загружать в AutoCAD 2026 (.NET 8) и наоборот.
+
+---
+
+## Портативная сборка (только папка PosCounter.Net)
+
+Если копируете **только** `PosCounter.Net` на рабочий стол (без корня репозитория), внутри проекта уже есть автономный набор:
+
+| Папка / файл | Назначение |
+|--------------|------------|
+| `PosCounter.Net\Directory.Build.props` | Подключает локальные props при открытии `.csproj` |
+| `PosCounter.Net\build\AutoCAD.props` | Путь к AutoCAD 2016 |
+| `PosCounter.Net\build\NuGet.local.props` | Запасной путь ValueTuple (`$(USERPROFILE)\.nuget\...`) |
+| `PosCounter.Net\build\build-ac2016.cmd` | Сборка net46 → `PosCounter.Net\dll 2016\` |
+| `PosCounter.Net\build\СБОРКА_VS_AC2016.md` | Пошаговая инструкция для Visual Studio |
+
+1. Скопируйте папку `PosCounter.Net` на рабочий стол (можно без `bin\`, `obj\`).
+2. Откройте `PosCounter.Net.csproj` в VS или запустите `build\build-ac2016.cmd`.
+3. Готовые DLL — в `PosCounter.Net\dll 2016\` (оба файла для NETLOAD).
 
 ---
 
@@ -242,9 +265,11 @@ Get-ChildItem "C:\Program Files\Autodesk" -Recurse -Filter AcMgd.dll -ErrorActio
 |--------------|------------|
 | `build\AutoCAD.props.template` | Образец настроек |
 | `build\AutoCAD.props` | Ваши пути (создаёте сами) |
-| `build\build-ac2016.cmd` | Сборка + копия в `dll 2016` |
+| `build\build-ac2016.cmd` | Сборка + копия в `dll 2016` (из корня репо) |
 | `build\build-ac2026.cmd` | Сборка net8 |
-| `dll 2016\` | Готовая DLL для AC 2016–2024 |
+| `PosCounter.Net\build\` | Портативный набор для сборки только папки проекта |
+| `dll 2016\` | Готовая DLL для AC 2016–2024 (корень репо) |
+| `PosCounter.Net\dll 2016\` | Готовая DLL при портативной сборке |
 | `dll 2026\` | Готовая DLL для AC 2025+ |
 | `PosCounter.Net\bin\Release\net46\` | Выход MSBuild (2016) |
 | `PosCounter.Net\bin\Release\net8.0-windows\` | Выход MSBuild (2026) |

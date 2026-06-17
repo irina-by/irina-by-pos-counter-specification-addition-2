@@ -2,7 +2,7 @@
 
 **Версия:** 4.2.0-table-grid-lines  
 **Сборки:** `dll 2016` (net46), `dll 2026` (net8.0-windows)  
-**Дата актуализации:** 2026-06-09 (многострочное наименование, grid scan шапки, ResolveNameForKey, fix row1, native Table)
+**Дата актуализации:** 2026-06-17 (видимые строки qty, CMD только для инженера, единый факт-план)
 
 ---
 
@@ -380,41 +380,62 @@ CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `markBlockEnd`, `rowEndEx`
 | `UpsertQtyText` | update/create DBText (LINE path) |
 | `UpsertQtyInAcadTable` | update native Table cell (число в «N шт.») |
 
+**Источник qty для writeback:** `PaletteHost.TryBuildQtyByKeyForWriteback` → `PosCounterControl.TryBuildQtyByKeyFromVisibleRows` (`GetVisibleDataRows` + `PassesFilter`). Не `_lastCountRows` — только то, что видно в палитре после фильтров.
+
 **Не пишет:** наименование, примечания инженера (намеренно сохраняются при update).
 
 ---
 
-## 15. Логи CMD (активные)
+## 15. Логи CMD (для инженера)
 
-| Тег | Источник |
-|-----|----------|
-| `[POSC] Распознана шапка…` | ReportDetectedHeader |
-| `[POSC] Граница шапки/данных…` | ReportDetectedHeader |
-| `[POSC] KeyToRowMark` / `[POSC] Марок в данных…` | ReportDetectedHeader |
-| `[POSC] Марка 1 в CellText…` | FormatMissingKeyOneDiagnostic |
-| `[NAME-DEDUPE]` | ResolveNameForKey cell-only / collapse |
-| `[KV-ANCHOR]` | ResolveNameForKey fallback |
-| `[POSC] Марка: наложение…` | BindKeysFromProperties |
-| `[POSC] Сетка таблицы: линии на разных слоях…` | Grid merge |
-| `[KV-PAIR] key= value=` | FillMarkNames |
-| `[NAME-BOUNDARY]` | ResolveNameFromMergeGroup |
-| `[NAME-ROW]` | CollectNamePartsFromNameCell |
-| `[NAME-SUPPLEMENT]` | SupplementNamePartsInVerticalBand |
-| `[NAME-FOREIGN-SKIP]` | NameTextBelongsToMarkKey |
-| `[NAME-BLEED]` | IsUpstreamBleedFromForeignMark (diag) |
-| `[NAME-STOP]` / `[NAME-SECTION]` | name filters |
-| `[CELL-SPLIT-DATA]` | SplitNameColumnRowsData |
+Файлов на диск **не создаётся**. В CMD — только краткие `[POSC]` / `[INFO]`. Разработческие `[POSC-DIAG]`, `[NAME-*]`, `[KV-PAIR]` **отключены** (`SpecGridLog.WriteDiag` — no-op; `log.Info` — no-op).
+
+### NETLOAD
+
+| Тег | Текст |
+|-----|-------|
+| `[POSC]` | `PosCounter.Net … (net46/net8.0-windows) загружен.` |
+
+### ЗАПУСТИТЬ
+
+Сообщения в **строке статуса палитры** (внизу), не в CMD.
+
+### Выбрать спецификацию
+
+| Тег | Когда | Пример |
+|-----|-------|--------|
+| `[INFO]` | Выбор рамок | `Выбрана таблица 1 …`, `Всего выбрано таблиц: N` |
+| `[POSC]` | Шапка | `Распознана шапка (таблица N): Марка …; Наименование …; Кол. …` |
+| `[POSC]` | Данные | `Граница шапки/данных: HeaderEndRow=… RowDataStart=…` |
+| `[POSC]` | Марки | `KeyToRowMark: 1→row1, …` |
+| `[POSC]` | Нет qty | `Количество не найдено в палитре для марок: …` |
+| `[POSC]` | Итог qty | `WriteQty итог: записано=N, пропущено=M` |
+| `[POSC]` | Предупреждения | колонка не распознана; сетка не построена; марки в «Поз.» не найдены; линии на разных слоях |
+
+**Источник qty для writeback:** `PaletteHost.TryBuildQtyByKeyForWriteback` → `TryBuildQtyByKeyFromVisibleRows` (видимые строки палитры после фильтров).
+
+### Отключено (закомментировано в коде)
+
+`WriteDiag`, детальная диагностика шапки (`BuildHeaderTopBandDiagnostic`), `gridLayer`, `вне сетки`, `pass1 ColMark`, `ИТОГ ColMark/имена`, `[NAME-BOUNDARY]` и др.
 
 ---
 
 ## 16. Сборка
 
-| AutoCAD | Framework | Скрипт |
-|---------|-----------|--------|
-| 2016–2024 | net46 | `build\build-ac2016.cmd` |
-| 2025+ | net8.0-windows | `build\build-ac2026.cmd` |
+| AutoCAD | Framework | Скрипт | Деплой |
+|---------|-----------|--------|--------|
+| 2016–2024 | net46 | `build\build-ac2016.cmd` (корень репо) или `PosCounter.Net\build\build-ac2016.cmd` (портативно) | `dll 2016\` — **PosCounter.Net.dll** + **System.ValueTuple.dll** |
+| 2025+ | net8.0-windows | `build\build-ac2026.cmd` | `dll 2026\PosCounter.Net.dll` |
 
-Пути: `build\AutoCAD.props` (из template). Подробно: `docs/BUILD.md`.
+Пути: `build\AutoCAD.props` (из template) или `PosCounter.Net\build\AutoCAD.props`. Подробно: `docs/BUILD.md`.
+
+### Портативная сборка AC 2016
+
+См. `.cursor/plans/factual_program_architecture.plan.md` §16 и `PosCounter.Net\build\СБОРКА_VS_AC2016.md`.
+
+### Диагностика AC 2016
+
+`[POSC-DIAG]` **отключён** для инженера. См. `.cursor/plans/factual_program_architecture.plan.md` §14 и §19.
 
 ---
 
@@ -423,7 +444,7 @@ CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `markBlockEnd`, `rowEndEx`
 - `PosCounterEngine` — не менять.
 - Pass-1 шапка: `AssignCellsHeader`, `DetectHeader*`, `EstimateHeaderEndRow`.
 - `BuildMergedGridAxes`, sort GridYs desc.
-- Qty — только ColQty; палитра qty = LOCK engine output.
+- Qty — только ColQty; палитра qty = **видимые** строки после `TryBuildQtyByKeyFromVisibleRows`.
 
 ---
 
@@ -441,5 +462,5 @@ CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `markBlockEnd`, `rowEndEx`
 
 - Инженер: `docs/INSTRUCTION_ENGINEER.md`
 - Простым языком: `Работа программы.md`
-- Факт-план: `.cursor/plans/factual_program_architecture.plan.md`
+- Факт-архитектура (единственный план): `.cursor/plans/factual_program_architecture.plan.md`
 - История правок: `.cursor/DIALOGUE_LOG.md`

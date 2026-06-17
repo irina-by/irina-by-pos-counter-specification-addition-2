@@ -31,12 +31,70 @@ namespace PosCounter.Net
             try
             {
                 SpecGridSession.ClearScopes();
+                WriteNetLoadBanner();
                 AcApp.Idle += AutoOpenPaletteAfterNetLoad;
             }
             catch
             {
                 // ignore
             }
+        }
+
+        private static void WriteNetLoadBanner()
+        {
+            try
+            {
+                var doc = AcApp.DocumentManager.MdiActiveDocument;
+                if (doc?.Editor == null)
+                {
+                    return;
+                }
+
+                var asm = Assembly.GetExecutingAssembly();
+                var info = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                    ?? asm.GetName().Version?.ToString()
+                    ?? "?";
+#if NET8_0
+                const string targetLabel = "net8.0-windows";
+#else
+                const string targetLabel = "net46";
+#endif
+                doc.Editor.WriteMessage(
+                    $"\n[POSC] PosCounter.Net {info} ({targetLabel}) загружен.\n");
+
+                /*
+                var acDiag = TryFormatAcadReleaseForDiag(targetLabel);
+                if (!string.IsNullOrWhiteSpace(acDiag))
+                {
+                    SpecGridLog.ResetDiagSession(doc);
+                    SpecGridLog.WriteDiag(doc, acDiag);
+                }
+                */
+            }
+            catch
+            {
+                // ignore
+            }
+        }
+
+        private static string TryFormatAcadReleaseForDiag(string targetLabel)
+        {
+            try
+            {
+                var current = HostApplicationServices.Current;
+                var prop = current?.GetType()?.GetProperty("ReleaseMajorVersion");
+                var raw = prop?.GetValue(current, null) as string;
+                if (int.TryParse(raw, out var major))
+                {
+                    return $"AutoCAD R{major} / DLL {targetLabel}";
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+
+            return string.IsNullOrWhiteSpace(targetLabel) ? null : $"AutoCAD ? / DLL {targetLabel}";
         }
 
         public void Terminate()

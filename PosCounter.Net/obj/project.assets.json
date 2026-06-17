@@ -427,11 +427,11 @@
   "project": {
     "version": "4.2.0",
     "restore": {
-      "projectUniqueName": "E:\\Yandex.Disk-ananchenkoiren\\TatbelGit\\Pos_counter addition — 2\\PosCounter.Net\\PosCounter.Net.csproj",
+      "projectUniqueName": "E:\\Yandex.Disk-ananchenkoiren\\TatbelGit\\Pos_counter addition — 2026\\PosCounter.Net\\PosCounter.Net.csproj",
       "projectName": "PosCounter.Net",
-      "projectPath": "E:\\Yandex.Disk-ananchenkoiren\\TatbelGit\\Pos_counter addition — 2\\PosCounter.Net\\PosCounter.Net.csproj",
+      "projectPath": "E:\\Yandex.Disk-ananchenkoiren\\TatbelGit\\Pos_counter addition — 2026\\PosCounter.Net\\PosCounter.Net.csproj",
       "packagesPath": "C:\\Users\\user\\.nuget\\packages\\",
-      "outputPath": "E:\\Yandex.Disk-ananchenkoiren\\TatbelGit\\Pos_counter addition — 2\\PosCounter.Net\\obj\\",
+      "outputPath": "E:\\Yandex.Disk-ananchenkoiren\\TatbelGit\\Pos_counter addition — 2026\\PosCounter.Net\\obj\\",
       "projectStyle": "PackageReference",
       "crossTargeting": true,
       "configFilePaths": [
@@ -488,7 +488,8 @@
           },
           "System.ValueTuple": {
             "target": "Package",
-            "version": "[4.5.0, )"
+            "version": "[4.5.0, )",
+            "generatePathProperty": true
           }
         },
         "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.300\\RuntimeIdentifierGraph.json"

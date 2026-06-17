@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PosCounter.Net")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("4.2.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("4.2.0-table-grid-lines+260fa8b0eb0a7e07beb39e70237b17d7248ce560")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("4.2.0-table-grid-lines+0d47e13d315748919e3ec7170a921f20e4df7664")]
 [assembly: System.Reflection.AssemblyProductAttribute("PosCounter.Net")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PosCounter.Net")]
 [assembly: System.Reflection.AssemblyVersionAttribute("4.2.0.0")]

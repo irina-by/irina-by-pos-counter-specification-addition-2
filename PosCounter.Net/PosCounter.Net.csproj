@@ -43,7 +43,11 @@
   <ItemGroup Condition="'$(TargetFramework)' == 'net46'">
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net46" Version="1.0.3" PrivateAssets="all" />
     <!-- C# 7 tuples (Sample, Plain, Score) и Dictionary (r,c) — в .NET 4.6 нет встроенно -->
-    <PackageReference Include="System.ValueTuple" Version="4.5.0" />
+    <PackageReference Include="System.ValueTuple" Version="4.5.0" GeneratePathProperty="true" />
+    <Reference Include="System.ValueTuple">
+      <HintPath>$(PkgSystem_ValueTuple)\lib\net461\System.ValueTuple.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>

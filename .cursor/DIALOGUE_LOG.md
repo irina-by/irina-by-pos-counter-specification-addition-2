@@ -167,3 +167,29 @@
 > Причина: `rowEndExclusive` обрезался по `KeyToRowTopSub` следующей марки (совпадал со строкой продолжения); `IsSectionHeaderRow` пропускала 2-ю строку наименования как «секцию без марки».
 > Правка: `GetNextKeyRowMarkExclusive` (KeyToRowMark); новая формула `rowEndExclusive`; `IsNameContinuationRow` + исключение в 3 collect-путях и `AllNameRowsHaveCellText`; CMD `nextMarkRow`. Docs.
 > Результат: СБОРКА net8.0-windows OK (0 errors), `dll 2026\PosCounter.Net.dll` обновлена; ручной тест key=51 — `[NAME-BOUNDARY] nextMarkRow/rowEndEx`, `[KV-PAIR]` 2 строки (NETLOAD).
+
+> [2026-06-10] Задача: план ac2016_dll_fix — DLL net46 для AC 2016 не работает (спецификация), net8 для AC 2026 OK.
+> Правка: `.csproj` ValueTuple `GeneratePathProperty` + `Reference` net461; `build-ac2016.cmd` (оба DLL в `dll 2016`); `RebindScopeKeysAndNames` skip `DetectHeader` при `ColumnsInferredFromData`; `TryGetMTextBounds` (Extents + GetBoundingPoints); `UnassignedTextCountAfterDataPass` + CMD; `WriteNetLoadBanner` в `Commands.Initialize`. Docs: INSTRUCTION_ENGINEER, BUILD, DEVELOPER; план `.cursor/plans/ac2016_dll_fix.plan.md`.
+> Результат: СБОРКА net8.0-windows OK (0 errors); net46 — только нет AcMgd на машине сборки; ручной тест AC 2016 — ожидает инженера (`build-ac2016.cmd` на ПК с AC 2016 → NETLOAD `dll 2016\`).
+
+> [2026-06-10] Задача: портативный набор сборки AC 2016 внутри PosCounter.Net (копия только папки проекта на рабочий ПК Salnikava.I).
+> Правка: `PosCounter.Net\Directory.Build.props`; `PosCounter.Net\build\` — AutoCAD.props, NuGet.local.props, build-ac2016.cmd, СБОРКА_VS_AC2016.md; `PosCounter.Net\dll 2016\README.txt`. Docs: DEVELOPER, BUILD; план `.cursor/plans/poscounter_vs_ac2016_kit.plan.md`.
+> Результат: ГОТОВО — на рабочем ПК: скопировать PosCounter.Net → `build\build-ac2016.cmd` или VS (Release, x64, net46) → NETLOAD из `dll 2016\` (оба DLL); проверка на ПК с AC 2016 — ожидает инженера.
+
+> [2026-06-10] Задача: при двойном клике build-ac2016.cmd — сообщение про телеметрию dotnet.
+> Правка: в `PosCounter.Net\build\build-ac2016.cmd` — `DOTNET_CLI_TELEMETRY_OPTOUT=1`; в `СБОРКА_VS_AC2016.md` — пояснение, что это Microsoft .NET SDK, не PosCounter.
+> Результат: ЗАРАБОТАЛО (подавление уведомления) + документация для инженера.
+
+> [2026-06-10] Задача: план fix_ac2016_spec_recognition этап 1 — диагностические логи CMD для AC 2016 (до исправления алгоритма).
+> Правка: `SpecGridLog.WriteDiag` [POSC-DIAG]; `Pass1Col*`, `InferenceColQtyScoresSummary`, `BoundsMethod`; pass1/inference/unassigned/имена/WriteQty диагностика в `TableGrid.cs`, `SpecGridService.cs`; баннер AC R* при NETLOAD в `Commands.cs`; расширен `ReportDetectedHeader` при inference/ColQty<0; docs INSTRUCTION_ENGINEER §8.1, DEVELOPER, СБОРКА_VS_AC2016.
+> Результат: КОД ГОТОВ — сборка net46 на ПК с AC 2016 (`build-ac2016.cmd`); ручной тест: NETLOAD → ЗАПУСТИТЬ → спецификация → прислать CMD с [POSC-DIAG]; этап 2 (фиксы геометрии/ColQty) — после лога.
+
+> [2026-06-10] Задача: VS net46 — ошибка CS0246 «Document» не найден при сборке для AC 2016.
+> Причина: в `TableGrid.cs` метод `ReportMarkNamesDiagnostic(Document doc, …)` без `using Autodesk.AutoCAD.ApplicationServices`.
+> Правка: добавлен `using Autodesk.AutoCAD.ApplicationServices` в `TableGrid.cs`.
+> Результат: ЗАРАБОТАЛО (ожидает пересборки в VS); если ошибка останется — проверить `build\AutoCAD.props` и путь к AcMgd.dll.
+
+
+> [2026-06-17] Задача: актуализировать factual_program_architecture.plan.md; оставить один план.
+> Правка: план обновлён (qty видимые, CMD инженера, inference, сборки); удалены fix_qty, engineer_cmd_logs, ac2016_*, poscounter_kit планы; DEVELOPER.md — ссылки только на factual_plan.
+> Результат: ГОТОВО — единственный план `.cursor/plans/factual_program_architecture.plan.md`.

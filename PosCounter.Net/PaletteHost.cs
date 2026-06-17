@@ -220,7 +220,7 @@ namespace PosCounter.Net
                 Dictionary<int, int> snapshotMap = null;
                 control.Dispatcher.Invoke(() =>
                 {
-                    snapshotMap = control.TryBuildQtyByKeyFromAllRowsSnapshot();
+                    control.TryBuildQtyByKeyFromVisibleRows(out snapshotMap);
                 });
                 qtyByKey = snapshotMap ?? new Dictionary<int, int>();
                 return qtyByKey.Count > 0;

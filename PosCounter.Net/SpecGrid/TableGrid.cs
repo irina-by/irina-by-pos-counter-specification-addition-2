@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 
@@ -46,6 +47,8 @@ namespace PosCounter.Net.SpecGrid
         public int SourceIndex;
         /// <summary>Строка с max overlap экстента (pass-2 data).</summary>
         public int DominantRow = -1;
+        /// <summary>Метод координат: ExtentsTop, Location, AlignmentPoint и т.д.</summary>
+        public string BoundsMethod;
     }
 
     internal sealed class ScopeGridResult
@@ -117,6 +120,15 @@ namespace PosCounter.Net.SpecGrid
         public ObjectId NativeTableId = ObjectId.Null;
         /// <summary>В выборке были Table и Line — использован LINE path.</summary>
         public bool MixedTableLineSelection;
+        /// <summary>Текстов без Row/Col после AssignCellsData (pass2).</summary>
+        public int UnassignedTextCountAfterDataPass;
+        /// <summary>Столбцы после pass1 DetectHeader (до pass2 / inference).</summary>
+        public int Pass1ColMark = -1;
+        public int Pass1ColName = -1;
+        public int Pass1ColQty = -1;
+        public bool Pass1HeaderDetectedByTopTextBand;
+        /// <summary>Scores ColQty при inference (для [POSC-DIAG]).</summary>
+        public string InferenceColQtyScoresSummary;
     }
 
     internal static class TableGridBuilder
@@ -334,6 +346,10 @@ namespace PosCounter.Net.SpecGrid
             EstimateHeaderEndRow(result, filteredH, log);
             ApplyHeaderBoundaryFromGridScan(result, log);
             DetectHeader(result, log);
+            result.Pass1ColMark = result.ColMark;
+            result.Pass1ColName = result.ColName;
+            result.Pass1ColQty = result.ColQty;
+            result.Pass1HeaderDetectedByTopTextBand = result.HeaderDetectedByTopTextBand;
             ComputeRowDataStart(result, null, log);
             BuildPrimaryNameLayer(texts, result, log);
             BuildTableContentLayers(texts, result, log);
@@ -341,6 +357,13 @@ namespace PosCounter.Net.SpecGrid
             result.PrimaryNameTextHeight = ComputePrimaryNameTextHeight(texts, result);
             // Pass 2: data-координаты (точка DataX/Y); split ColName после pass-2.
             AssignCellsData(texts, xsArr, ysArr, result);
+            result.UnassignedTextCountAfterDataPass = texts.Count(t => t.Row < 0 || t.Col < 0);
+            if (result.UnassignedTextCountAfterDataPass > 0)
+            {
+                log?.Info(
+                    $"TABLE-GRID: scope={scopeIndex} AssignCellsData: {result.UnassignedTextCountAfterDataPass}/{texts.Count} texts without row/col");
+            }
+
             SplitNameColumnRowsData(texts, ysArr, result, log);
             BuildTextsByRow(result);
             result.CellText = BuildCellMatrix(texts, rows, cols, result, log, filterTableLayers: true);
@@ -1303,8 +1326,21 @@ namespace PosCounter.Net.SpecGrid
             }
 
             log?.Info($"TABLE-GRID: scope={result.ScopeIndex} rebind keys/names ({passLabel})");
-            ApplyHeaderBoundaryFromGridScan(result, log);
-            DetectHeader(result, log);
+            if (!result.ColumnsInferredFromData)
+            {
+                ApplyHeaderBoundaryFromGridScan(result, log);
+                DetectHeader(result, log);
+            }
+            else
+            {
+                log?.Info(
+                    $"TABLE-GRID: scope={result.ScopeIndex} skip DetectHeader (ColumnsInferredFromData, ColMark={result.ColMark} ColName={result.ColName})");
+                if (result.RowDataStart <= 0)
+                {
+                    ApplyHeaderBoundaryFromGridScan(result, log);
+                }
+            }
+
             ComputeRowDataStart(result, horiz, log);
             BindKeysFromProperties(result, log);
             BindKeys(result, horiz, log);
@@ -1397,6 +1433,7 @@ namespace PosCounter.Net.SpecGrid
             result.ColName = bestNameCol;
             result.ColumnsInferredFromData = true;
 
+            var qtyScores = new int[cols];
             var bestQtyCol = -1;
             var bestQtyScore = -1;
             for (var c = 0; c < cols; c++)
@@ -1413,6 +1450,7 @@ namespace PosCounter.Net.SpecGrid
 
                 var header = MTextPlainText.SanitizeRawContents(BuildHeaderOnlyColumnText(result, c)).ToLowerInvariant();
                 var qtyScore = ScoreQtyHeader(header);
+                qtyScores[c] = qtyScore;
                 if (qtyScore > bestQtyScore)
                 {
                     bestQtyScore = qtyScore;
@@ -1421,9 +1459,37 @@ namespace PosCounter.Net.SpecGrid
             }
 
             result.ColQty = bestQtyScore >= MinHeaderScore ? bestQtyCol : -1;
+            result.InferenceColQtyScoresSummary = FormatInferenceColQtyScores(result, bestMarkCol, bestNameCol, qtyScores);
             log?.Info(
                 $"TABLE-GRID: scope={result.ScopeIndex} infer columns from data: MARK={result.ColMark} NAME={result.ColName} QTY={result.ColQty} paletteOverlap={CountPaletteKeyOverlapInColumn(result, bestMarkCol, paletteKeys)}");
             return true;
+        }
+
+        private static string FormatInferenceColQtyScores(
+            ScopeGridResult result,
+            int markCol,
+            int nameCol,
+            int[] qtyScores)
+        {
+            if (qtyScores == null || qtyScores.Length == 0)
+            {
+                return "inference ColQty: нет столбцов";
+            }
+
+            var parts = new List<string>();
+            for (var c = 0; c < qtyScores.Length; c++)
+            {
+                if (c == markCol || c == nameCol)
+                {
+                    continue;
+                }
+
+                parts.Add($"col{c}={qtyScores[c]}");
+            }
+
+            return parts.Count > 0
+                ? $"inference ColQty scores (min {MinHeaderScore}): {string.Join(", ", parts)}"
+                : "inference ColQty: нет кандидатов кроме Mark/Name";
         }
 
         private static int CountPaletteKeyOverlapInColumn(
@@ -1894,6 +1960,88 @@ namespace PosCounter.Net.SpecGrid
             }
 
             return lines;
+        }
+
+        /// <summary>Шапка по верхней полосе — координаты HeaderX/Y (для диагностики после inference).</summary>
+        internal static IEnumerable<string> BuildHeaderTopBandDiagnosticHeaderCoords(ScopeGridResult scope)
+        {
+            var lines = new List<string>();
+            if (scope == null || !TryGetHeaderTopTextBandY(scope, out var yLo, out var yHi))
+            {
+                lines.Add("шапка по HeaderXY: нет текстов в выборке");
+                return lines;
+            }
+
+            var bandTexts = (scope.AllTexts ?? new List<TextSample>())
+                .Where(t => t != null && t.HeaderY >= yLo && t.HeaderY <= yHi)
+                .ToList();
+
+            lines.Add(
+                $"шапка HeaderXY: maxY={scope.HeaderTopMaxY:F1} полоса {yLo:F1}..{yHi:F1} (текстов={bandTexts.Count})");
+
+            foreach (var t in bandTexts.Take(10))
+            {
+                var kind = t.IsMText ? "MText" : "DBText";
+                var plain = MTextPlainText.SanitizeRawContents(
+                    !string.IsNullOrWhiteSpace(t.Raw) ? t.Raw : (t.Plain ?? string.Empty));
+                var col = ResolveColumnIndexByX(scope.GridXs, t.HeaderX);
+                var colLabel = col >= 0 ? $"col{col}" : "col?";
+                var header = plain.ToLowerInvariant();
+                var score = Math.Max(
+                    ScoreHeader(header, "марка", "поз", "поз.", "mark", "п/п", "№", "номер", "item"),
+                    Math.Max(
+                        ScoreHeader(header, "наимен", "name", "назван", "наименование"),
+                        ScoreQtyHeader(header)));
+                var method = string.IsNullOrWhiteSpace(t.BoundsMethod) ? "?" : t.BoundsMethod;
+                lines.Add(
+                    $"  {kind}/{method} «{TrimForLog(plain, 24)}» H=({t.HeaderX:F0},{t.HeaderY:F0}) → {colLabel} score={score}");
+            }
+
+            return lines;
+        }
+
+        internal static IEnumerable<string> BuildUnassignedTextSamples(ScopeGridResult scope, int maxSamples = 5)
+        {
+            if (scope?.AllTexts == null)
+            {
+                yield break;
+            }
+
+            foreach (var t in scope.AllTexts.Where(x => x != null && (x.Row < 0 || x.Col < 0)).Take(maxSamples))
+            {
+                var kind = t.IsMText ? "MText" : "DBText";
+                var method = string.IsNullOrWhiteSpace(t.BoundsMethod) ? "?" : t.BoundsMethod;
+                var plain = TrimForLog(MTextPlainText.SanitizeRawContents(t.Plain ?? string.Empty), 30);
+                yield return
+                    $"#{t.SourceIndex} {kind} {method} Header=({t.HeaderX:F0},{t.HeaderY:F0}) Data=({t.DataX:F0},{t.DataY:F0}) «{plain}»";
+            }
+        }
+
+        internal static void ReportMarkNamesDiagnostic(Document doc, ScopeGridResult scope, int scopeNum)
+        {
+            // Разработческая диагностика имён — отключена.
+            /*
+            if (doc == null || scope == null)
+            {
+                return;
+            }
+
+            var pairs = scope.MarkNamePairs ?? new Dictionary<int, string>();
+            var total = pairs.Count;
+            var emptyKeys = pairs.Where(kv => string.IsNullOrWhiteSpace(kv.Value)).Select(kv => kv.Key).ToList();
+            var filled = total - emptyKeys.Count;
+            SpecGridLog.WriteDiag(
+                doc,
+                $"Таблица {scopeNum} имена: MarkNamePairs={total}, заполнено={filled}, пустых={emptyKeys.Count}");
+
+            if (emptyKeys.Count > 0)
+            {
+                var sample = string.Join(
+                    ", ",
+                    emptyKeys.OrderBy(k => k).Take(10).Select(k => k.ToString(CultureInfo.InvariantCulture)));
+                SpecGridLog.WriteDiag(doc, $"Таблица {scopeNum} пустые имена (ключи): {sample}");
+            }
+            */
         }
 
         /// <summary>Марка → Кол. → Наименование: каждый столбец назначается не более одной роли.</summary>
@@ -4001,6 +4149,32 @@ namespace PosCounter.Net.SpecGrid
             var yMin = dataPt.Y;
             var yMax = dataPt.Y;
             var method = "Location";
+            if (TryGetMTextBounds(mt, out headerPt, out dataPt, out yMin, out yMax, out method))
+            {
+                // headerPt / dataPt / yMin / yMax set by helper
+            }
+
+            var sample = CreateTextSample(mt, mt.Contents, headerPt, dataPt, yMin, yMax, mt.TextHeight, sourceIndex);
+            sample.BoundsMethod = method;
+            LogCellAssign(log, scopeIndex, "MText", method, headerPt, (sample.Plain ?? string.Empty).Length);
+            return sample;
+        }
+
+        /// <summary>Границы MText: GeometricExtents, затем GetBoundingPoints (AC 2016).</summary>
+        private static bool TryGetMTextBounds(
+            MText mt,
+            out Point3d headerPt,
+            out Point3d dataPt,
+            out double yMin,
+            out double yMax,
+            out string method)
+        {
+            headerPt = mt.Location;
+            dataPt = mt.Location;
+            yMin = mt.Location.Y;
+            yMax = mt.Location.Y;
+            method = "Location";
+
             try
             {
                 var ex = mt.GeometricExtents;
@@ -4012,15 +4186,58 @@ namespace PosCounter.Net.SpecGrid
                 yMax = ex.MaxPoint.Y;
                 dataPt = new Point3d(mt.Location.X, ex.MaxPoint.Y, mt.Location.Z);
                 method = "ExtentsTop";
+                return true;
             }
             catch
             {
-                // fallback Location
+                // fall through — часто на AC 2016 для отдельных MText
             }
 
-            var sample = CreateTextSample(mt, mt.Contents, headerPt, dataPt, yMin, yMax, mt.TextHeight, sourceIndex);
-            LogCellAssign(log, scopeIndex, "MText", method, headerPt, (sample.Plain ?? string.Empty).Length);
-            return sample;
+            try
+            {
+                var pts = mt.GetBoundingPoints();
+                if (pts == null || pts.Count < 1)
+                {
+                    return false;
+                }
+
+                var minX = pts[0].X;
+                var maxX = pts[0].X;
+                yMin = pts[0].Y;
+                yMax = pts[0].Y;
+                for (var i = 1; i < pts.Count; i++)
+                {
+                    var p = pts[i];
+                    if (p.X < minX)
+                    {
+                        minX = p.X;
+                    }
+
+                    if (p.X > maxX)
+                    {
+                        maxX = p.X;
+                    }
+
+                    if (p.Y < yMin)
+                    {
+                        yMin = p.Y;
+                    }
+
+                    if (p.Y > yMax)
+                    {
+                        yMax = p.Y;
+                    }
+                }
+
+                headerPt = new Point3d((minX + maxX) * 0.5, (yMin + yMax) * 0.5, mt.Location.Z);
+                dataPt = new Point3d(mt.Location.X, yMax, mt.Location.Z);
+                method = "BoundingPoints";
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static TextSample CreateTextSampleFromDbText(DBText db, int sourceIndex, int scopeIndex, SpecGridLog log)
@@ -4045,6 +4262,7 @@ namespace PosCounter.Net.SpecGrid
             }
 
             var sample = CreateTextSample(db, db.TextString, headerPt, dataPt, yMin, yMax, db.Height, sourceIndex);
+            sample.BoundsMethod = method;
             LogCellAssign(log, scopeIndex, "DBText", method, headerPt, (sample.Plain ?? string.Empty).Length);
             return sample;
         }
