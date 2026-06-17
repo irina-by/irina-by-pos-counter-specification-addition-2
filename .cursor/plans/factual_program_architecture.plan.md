@@ -304,6 +304,11 @@ flowchart LR
 
 **На чертёж пишется только ColQty.** Наименование в DWG не перезаписывается.
 
+- Точка: `ResolveQtyInsertPoint` — Y = `(GridYs[rowTop]+GridYs[rowBottomEx])/2` (при пометках инженера).
+- Цвет: `TryFillQtyAppearanceFromNameColumn` — из ColName (`PrimaryNameLayer`), не из пометки в ColQty.
+- Merged ColQty: `ResolveQtyCellRowBottomExByColQtyGrid`.
+- Стиль: `ResolveQtyTableTextAppearanceForScope(tr, scope, rowTop, rowBottomEx)`.
+
 ---
 
 ## 14. Логи CMD (инженер)

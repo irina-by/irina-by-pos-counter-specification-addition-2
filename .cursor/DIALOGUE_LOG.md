@@ -414,4 +414,14 @@
 
 > [2026-06-17] Задача: релиз на GitHub — AC 2026 + полный комплект AC 2016 из 24322f2.
 > Правка: коммиты `1b73e59`, `f571c54`; слияние с `origin/main`; `dll 2016\` + `dll 2026\`; все 161 файл из 24322f2 в дереве.
-> Результат: ожидает `git push origin main`.
+> Результат: ЗАРАБОТАЛО — push на GitHub.
+
+> [2026-06-16] Задача: исправить позицию «Кол.» при пометках инженера в ячейке (цифра выше соседних строк).
+> Причина: `ResolveQtyInsertY` ставил Y в центр только `rowTop..rowTop+1`; при высокой ячейке ColQty (пометка внизу) цифра уезжала вверх; `skip-far-entY` мешал обновлению.
+> Правка: `SpecGridService.cs` — Y как в 2026: `(GridYs[rowTop]+GridYs[rowBottomEx])/2`; `FindQtyTextInCell` по полному `rowBottomEx`; убран `skip-far-entY`/`ResolveHalfRowStepY`; docs DEVELOPER.
+> Результат: КОД ГОТОВ — пересборка NETLOAD; проверка на чертеже с пометкой «14» + qty «17» vs соседняя ячейка.
+
+> [2026-06-16] Задача: цвет «Кол.» не совпадает с основным текстом при пометке инженера (фиолетовая qty vs зелёная в соседней ячейке).
+> Причина: `TryFillQtyAppearanceFromNameColumn` (§19.19) не вызывался; цвет брался из ColQty/пометки; в rowTop нет ColName (merged-блок).
+> Правка: `ResolveQtyTableTextAppearanceForScope` — `CellHasEngineerAnnotationInColQty`, без qty-digit samples при пометке; `SampleSource` + цвет prefer Name; `TryFillQtyAppearanceFromNameColumn` — row band, MText, всегда override EntityColor; docs DEVELOPER §14.
+> Результат: КОД ГОТОВ — пересборка NETLOAD; проверка: qty зелёная как соседняя, пометка не тронута.
