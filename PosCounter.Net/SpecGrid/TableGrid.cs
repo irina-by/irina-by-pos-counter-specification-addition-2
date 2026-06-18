@@ -3792,6 +3792,88 @@ namespace PosCounter.Net.SpecGrid
                     SpecGridLog.WriteDiag(doc, $"Таблица {scopeNum} {line}");
                 }
             }
+
+            ReportMergeBoundaryBleedWarnings(doc, scope, scopeNum);
+        }
+
+        /// <summary>Только [POSC] ВНИМАНИЕ при bleed — имя следующей марки попало в текущую.</summary>
+        private static void ReportMergeBoundaryBleedWarnings(Document doc, ScopeGridResult scope, int scopeNum)
+        {
+            if (doc == null || scope == null || scope.ColName < 0)
+            {
+                return;
+            }
+
+            foreach (var kv in scope.KeyToRowMark.OrderBy(x => x.Key))
+            {
+                var key = kv.Key;
+                if (!scope.KeyToRowTopSub.TryGetValue(key, out var rowTop))
+                {
+                    continue;
+                }
+
+                var markBlockEnd = scope.KeyToMarkBlockEnd.TryGetValue(key, out var be)
+                    ? be
+                    : GetMarkBlockEndExclusive(scope, rowTop, key);
+                var nextKeyTop = GetNextKeyRowExclusive(scope, key);
+                var nextMarkRow = GetNextKeyRowMarkExclusive(scope, key);
+                var gridRows = ResolveGridRowCount(scope);
+                var rowEndEx = markBlockEnd;
+                var boundary = ResolveNextMarkBoundaryExclusive(rowTop, nextKeyTop, nextMarkRow, gridRows);
+                if (boundary > rowTop)
+                {
+                    rowEndEx = Math.Min(rowEndEx, boundary);
+                }
+
+                var nameLeadCap = CapRowEndBeforeNextMarkNameLead(scope, key, rowTop, rowEndEx);
+                if (nameLeadCap < rowEndEx)
+                {
+                    rowEndEx = nameLeadCap;
+                }
+
+                rowEndEx = Math.Max(rowEndEx, rowTop + 1);
+                rowEndEx = Math.Min(rowEndEx, gridRows);
+
+                if (nextKeyTop <= rowTop || rowEndEx <= nextKeyTop)
+                {
+                    continue;
+                }
+
+                var bleedTo = nextMarkRow > rowTop ? Math.Min(rowEndEx, nextMarkRow) : rowEndEx;
+                var hasForeignName = false;
+                for (var r = nextKeyTop; r < bleedTo && r < gridRows; r++)
+                {
+                    if (!string.IsNullOrWhiteSpace(GetTrimmedNameAtRow(scope, r)))
+                    {
+                        hasForeignName = true;
+                        break;
+                    }
+                }
+
+                if (!hasForeignName)
+                {
+                    continue;
+                }
+
+                var nextKey = GetNextMarkKeyAfter(scope, key);
+                SpecGridLog.TryWriteMergeBoundaryLine(
+                    doc,
+                    $"ВНИМАНИЕ Табл.{scopeNum} марка {key}: захвачено {bleedTo - nextKeyTop} лишн. строк ({nextKeyTop}..{bleedTo - 1})" +
+                    (nextKey > 0 ? $" — имя марки {nextKey} до её цифры" : " — имя следующей марки до её цифры"));
+            }
+        }
+
+        private static int GetNextMarkKeyAfter(ScopeGridResult scope, int key)
+        {
+            foreach (var kv in scope.KeyToRowMark.OrderBy(x => x.Key))
+            {
+                if (kv.Key > key)
+                {
+                    return kv.Key;
+                }
+            }
+
+            return 0;
         }
 
         /// <summary>Марка → Кол. → Наименование: каждый столбец назначается не более одной роли.</summary>
@@ -4968,19 +5050,12 @@ namespace PosCounter.Net.SpecGrid
             var isMerged = markBlockEnd > rowTop + 1 || rowTop < rowMark;
             var nextMarkRow = GetNextKeyRowMarkExclusive(grid, key);
             var nextKeyTop = GetNextKeyRowExclusive(grid, key);
+            var gridRows = ResolveGridRowCount(grid);
             var rowEndExclusive = markBlockEnd;
-            if (nextMarkRow > rowTop)
+            var nextBoundary = ResolveNextMarkBoundaryExclusive(rowTop, nextKeyTop, nextMarkRow, gridRows);
+            if (nextBoundary > rowTop)
             {
-                rowEndExclusive = Math.Min(rowEndExclusive, nextMarkRow);
-            }
-
-            if (!isMerged && nextKeyTop > rowTop)
-            {
-                rowEndExclusive = Math.Min(rowEndExclusive, nextKeyTop);
-            }
-            else if (isMerged && nextMarkRow > rowTop)
-            {
-                rowEndExclusive = Math.Max(rowEndExclusive, Math.Min(nextMarkRow + 1, ResolveGridRowCount(grid)));
+                rowEndExclusive = Math.Min(rowEndExclusive, nextBoundary);
             }
 
             var nameLeadCap = CapRowEndBeforeNextMarkNameLead(grid, key, rowTop, rowEndExclusive);
@@ -4992,7 +5067,7 @@ namespace PosCounter.Net.SpecGrid
             rowEndExclusive = Math.Max(rowEndExclusive, rowTop + 1);
             rowEndExclusive = Math.Min(rowEndExclusive, ResolveGridRowCount(grid));
             var boundaryReason =
-                $"nameRows {rowTop}..{rowEndExclusive - 1} nextMarkRow={nextMarkRow} markBlockEnd={markBlockEnd} rowEndEx={rowEndExclusive} nameLeadCap={nameLeadCap} merged={isMerged}";
+                $"nameRows {rowTop}..{rowEndExclusive - 1} nextMarkRow={nextMarkRow} nextKeyTop={nextKeyTop} markBlockEnd={markBlockEnd} rowEndEx={rowEndExclusive} nameLeadCap={nameLeadCap} merged={isMerged}";
 
             var cellParts = new List<string>();
             CollectNamePartsFromCellText(grid, key, rowTop, rowEndExclusive, cellParts);
@@ -5627,6 +5702,51 @@ namespace PosCounter.Net.SpecGrid
             return merged;
         }
 
+        /// <summary>
+        /// Exclusive row: name rows at or after this index belong to the next mark (merge top or digit row).
+        /// </summary>
+        private static int ResolveNextMarkBoundaryExclusive(
+            int rowTop,
+            int nextKeyTop,
+            int nextMarkRow,
+            int gridRowCount)
+        {
+            var hasKeyTop = nextKeyTop > rowTop && nextKeyTop < gridRowCount;
+            var hasMarkRow = nextMarkRow > rowTop && nextMarkRow < gridRowCount;
+
+            if (hasKeyTop && hasMarkRow)
+            {
+                return Math.Min(nextKeyTop, nextMarkRow);
+            }
+
+            if (hasKeyTop)
+            {
+                return nextKeyTop;
+            }
+
+            if (hasMarkRow)
+            {
+                return nextMarkRow;
+            }
+
+            return gridRowCount;
+        }
+
+        private static int FinalizeMarkBlockEndExclusive(ScopeGridResult grid, int rowTop, int key, int blockEnd)
+        {
+            var rows = ResolveGridRowCount(grid);
+            blockEnd = Math.Min(blockEnd, rows);
+            var nextKeyTop = GetNextKeyRowExclusive(grid, key);
+            var nextMarkRow = GetNextKeyRowMarkExclusive(grid, key);
+            var boundary = ResolveNextMarkBoundaryExclusive(rowTop, nextKeyTop, nextMarkRow, rows);
+            if (boundary > rowTop)
+            {
+                blockEnd = Math.Min(blockEnd, boundary);
+            }
+
+            return Math.Max(blockEnd, Math.Min(rowTop + 1, rows));
+        }
+
         /// <summary>Верхняя граница следующей позиции (rowTopSub), чтобы не захватывать её имя.</summary>
         private static int GetNextKeyRowExclusive(ScopeGridResult grid, int key)
         {
@@ -5673,7 +5793,7 @@ namespace PosCounter.Net.SpecGrid
             var rows = grid.CellText.GetLength(0);
             if (grid.ColMark < 0 || rowTop < 0 || rowTop >= rows)
             {
-                return Math.Min(rowTop + 1, rows);
+                return FinalizeMarkBlockEndExclusive(grid, rowTop, key, Math.Min(rowTop + 1, rows));
             }
 
             var r = rowTop + 1;
@@ -5682,13 +5802,13 @@ namespace PosCounter.Net.SpecGrid
                 var otherKey = ResolveMarkKeyAtRow(grid, r);
                 if (otherKey > 0 && otherKey != key)
                 {
-                    return r;
+                    return FinalizeMarkBlockEndExclusive(grid, rowTop, key, r);
                 }
 
                 var mark = (grid.CellText[r, grid.ColMark] ?? string.Empty).Trim();
                 if (otherKey <= 0 && MTextPlainText.TryParseMarkKey(mark, out otherKey) && otherKey != key)
                 {
-                    return r;
+                    return FinalizeMarkBlockEndExclusive(grid, rowTop, key, r);
                 }
 
                 r++;
@@ -5696,7 +5816,7 @@ namespace PosCounter.Net.SpecGrid
 
             var end = rows;
             end = Math.Max(end, ExtendMarkBlockEndByMarkTextY(grid, rowTop, key, end));
-            return Math.Min(end, rows);
+            return FinalizeMarkBlockEndExclusive(grid, rowTop, key, end);
         }
 
         private static int ExtendMarkBlockEndByMarkTextY(ScopeGridResult grid, int rowTop, int key, int currentEnd)

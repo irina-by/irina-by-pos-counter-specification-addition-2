@@ -236,7 +236,8 @@ flowchart TD
 ### 10.1. Диапазон строк
 
 - `ResolveNameRowTopForKey`: `≥ HeaderEndRow`, `≥ RowDataStart`, skip секций.
-- `rowEndExclusive` = min(`GetNextKeyRowMarkExclusive`, mark block, …); **`IsNameContinuationRow`** — вторая строка имени не режется как секция.
+- **`ResolveNextMarkBoundaryExclusive`** (2026-06-17): `rowEndExclusive = min(markBlockEnd, min(nextKeyTop, nextMarkRow))`; `FinalizeMarkBlockEndExclusive` в `GetMarkBlockEndExclusive`.
+- **`IsNameContinuationRow`** — вторая строка имени не режется как секция.
 
 ### 10.2. Сбор имени
 
@@ -248,7 +249,9 @@ flowchart TD
 
 ### 10.3. Anti-bleed
 
-- **`NameTextBelongsToMarkKey`** / `ResolveOwnerMarkKeyForNameText`.
+- **Граница merge-марок (2026-06-17):** `ResolveNextMarkBoundaryExclusive` — обрезка по `nextKeyTop` (верх merge следующей марки), не по `nextMarkRow+1`. План: `plans/fix_merge_mark_boundary.md`.
+- **`NameTextBelongsToMarkKey`** / `ResolveOwnerMarkKeyForNameText` — owner при dual-pass.
+- **`ReportMergeBoundaryBleedWarnings`** — `[POSC] ВНИМАНИЕ …` в CMD при остаточном bleed (лимит 25 строк).
 - Логи `[NAME-*]`, `[KV-PAIR]` в CMD **отключены** (`log.Info` — no-op).
 
 ### 10.4. Dedupe

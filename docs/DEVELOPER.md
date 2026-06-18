@@ -2,7 +2,7 @@
 
 **Версия:** 4.2.0-table-grid-lines  
 **Сборки:** `dll 2016` (net452, .NET 4.5.2+ / AC 2016 SP1–2024), `dll 2026` (net8.0-windows)  
-**Дата актуализации:** 2026-06-17 (релиз AC 2016+2026, qty Y/цвет при пометках, CMD для инженера, без СПДС)
+**Дата актуализации:** 2026-06-17 (релиз AC 2016+2026; восстановлен `TableGrid` из `24322f2`; фикс bleed имён merge — `ResolveNextMarkBoundaryExclusive`; qty Y/цвет при пометках; CMD для инженера)
 
 ---
 
@@ -275,38 +275,33 @@ PosCounter.Net/
 
 **Правило:** для марки `key` — верхняя строка блока в ColMark (`ResolveNameRowTopForKey`), диапазон строк `[rowTop, rowEndExclusive)` для сбора имён, `CellText` + dual-pass `AllTexts` (LINE) при недостаточном CellText, fallback `CellText[rowMark, ColName]` и соседние col ±1, лог `[KV-ANCHOR]`.
 
-**Диапазон строк имени (`rowEndExclusive`):**
+**Диапазон строк имени (`rowEndExclusive`) — с 2026-06-17 (этап 2):**
 
 ```text
 markBlockEnd = KeyToMarkBlockEnd[key] или GetMarkBlockEndExclusive(rowTop, key)
-nextMarkRow = GetNextKeyRowMarkExclusive(key)   // KeyToRowMark следующей марки, НЕ rowTopSub
-rowEndExclusive = min(markBlockEnd, nextMarkRow) при nextMarkRow > rowTop
-rowEndExclusive = max(rowEndExclusive, rowTop + 1), min(..., GridRowCount)
+nextMarkRow = GetNextKeyRowMarkExclusive(key)   // строка цифры следующей марки
+nextKeyTop = GetNextKeyRowExclusive(key)        // верх merge-блока следующей марки (KeyToRowTopSub)
+boundary = ResolveNextMarkBoundaryExclusive(rowTop, nextKeyTop, nextMarkRow)
+         = min(nextKeyTop, nextMarkRow) когда оба > rowTop
+rowEndExclusive = min(markBlockEnd, boundary)
+CapRowEndBeforeNextMarkNameLead → max(rowTop+1), min(GridRowCount)
 ```
 
-`GetNextKeyRowExclusive` (rowTopSub) используется для ColQty, **не** для склейки имени: при объединённой ячейке «Поз.» rowTopSub следующей марки может совпадать со строкой продолжения предыдущего имени и обрезать диапазон до одной строки.
+`GetMarkBlockEndExclusive` / `FinalizeMarkBlockEndExclusive` — тот же `boundary`, чтобы `KeyToMarkBlockEnd` не раздувался через следующую марку.
+
+**Bleed (исправлено):** раньше для merged `rowEndExclusive = max(..., nextMarkRow+1)` втягивал RU/EN строки **следующей** марки (над её цифрой). Теперь обрезка по **`nextKeyTop`**.
 
 **Продолжение имени vs секция:** `IsNameContinuationRow(key, row)` — строка внутри **`[rowTop, markBlockEnd)`**, включая строки имени **выше** цифры марки в merged-ячейке ColMark (`rowTop ≤ row < rowMark` с непустым ColName) и строки ниже цифры без своей марки; такие строки **не** пропускаются как `IsSectionHeaderRow` в путях KV/value (`CollectNamePartsFromCellText`, `CollectNamePartsForPositionRange`, `SupplementNamePartsInVerticalBand`, `AllNameRowsHaveCellText`).
 
-CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `markBlockEnd`, `rowEndEx`, `cellOnly` (внутренний log — в CMD **не выводится**).
+CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `nextKeyTop`, `markBlockEnd`, `rowEndEx`, `cellOnly` (внутренний log — в CMD **не выводится**).
 
-### Диагностика границ merge в CMD (2026-06-17)
+### Диагностика bleed в CMD (2026-06-17)
 
-**Состояние (2026-06-17):** `TableGrid.cs` восстановлен из коммита **`24322f2`** (идентичен Desktop `Pos_counter addition — 2`). В `TableGrid` **нет** `ReportMergeBoundaryDiagnostic`; инфраструктура в `SpecGridLog` / `SpecDiagPolicy` сохранена для этапа 2.
-
-План: `plans/fix_merge_mark_boundary.md`. Метод (когда вернётся в `TableGrid`): `ReportMergeBoundaryDiagnostic` → `ReportMarkNamesDiagnostic` после `FillMarkNamesFromMergeGroups`.
+`ReportMergeBoundaryBleedWarnings` → из `ReportMarkNamesDiagnostic` после заполнения имён. Только **`[POSC] ВНИМАНИЕ`** если после фикса bleed всё ещё есть (`rowEndEx > nextKeyTop` + текст ColName в чужих строках). Лимит: `SpecGridLog.TryWriteMergeBoundaryLine` (25 строк на операцию).
 
 | Сообщение CMD | Смысл |
 |---------------|--------|
-| `Табл.N марка K: имя строки A..B (span=S) \| цифра r=… \| верх=… \| конец=… \| след.: верх=… цифра=…` | Диапазон сбора имени; `верх` = `KeyToRowTopSub`; `конец` = `rowEndEx`; `след.верх` = верх merge **следующей** марки |
-| `merge digit→top r=X→Y` | `FindRowTopSub`: цифра в строке X, верх блока Y |
-| `ВНИМАНИЕ марка K: захвачено N лишн. строк (A..B) — имя марки M до её цифры` | **Bleed**: имя следующей марки попало в предыдущую (`rowEndEx > nextKeyTop`) |
-| `r=R colName=«…» markCol=… → …` | Построчный срез ColName в зоне bleed |
-| `Табл.N границы: марок=… предупреждений=…` | Итог; `длинное имя` — подозрение на склейку |
-
-Лимит: `SpecGridLog.TryWriteMergeBoundaryLine` — **25 строк** на операцию «Выбрать спецификацию». Политика: `SpecDiagPolicy.ShouldTraceMergeBoundarySummary` (bleed, span≥4, sample keys).
-
-**Как читать:** если `конец > след.верх` и есть `ВНИМАНИЕ` — нужен этап 2 (`ResolveNextMarkBoundaryExclusive`).
+| `ВНИМАНИЕ Табл.N марка K: захвачено … лишн. строк (A..B) — имя марки M до её цифры` | Bleed не устранён — нужна доработка |
 
 **Dedupe (MText+MText):**
 
@@ -676,17 +671,18 @@ CMD `[NAME-BOUNDARY]` логирует `nextMarkRow`, `markBlockEnd`, `rowEndEx`
 
 `grep` по `SpecGrid`: нет `key == 52`, `ColMark != 0`, mandatory `0/2/3`.
 
-### Merged-блоки и cellOnly (2026-06-14, post KV)
+### Merged-блоки и cellOnly (2026-06-14, post KV; граница — 2026-06-17)
 
-План: `.cursor/plans/fix_names_qty_post-kv_dd94bc56.plan.md`.
+Планы: `.cursor/plans/fix_names_qty_post-kv_dd94bc56.plan.md`; **`plans/fix_merge_mark_boundary.md`** (bleed двуязычных таблиц).
 
 | Правило | Реализация |
 |---------|------------|
-| Граница имени merged | `nextKeyTop` cap **не** применяется при `isMerged`; расширение до `nextMarkRow+1`; `HasNameTextOwnedByKey` для строк с чужой цифрой в ColMark |
+| Граница имени merged | **`ResolveNextMarkBoundaryExclusive`**: `rowEndExclusive = min(markBlockEnd, min(nextKeyTop, nextMarkRow))`; **`FinalizeMarkBlockEndExclusive`** в `GetMarkBlockEndExclusive`. *До 2026-06-17:* при `isMerged` было `max(..., nextMarkRow+1)` — bleed RU/EN следующей марки. |
 | cellOnly | Отключается при `reason=merged-block` или `missing-cyrillic` (`HasCyrillicInMarkBlock` — ColName + ColDesignation) |
 | Qty sub-row | `FindQtyTextInCell` — полоса `rowTop..rowBottomEx` при merged span |
 | Стиль qty | `ResolveQtyTableTextAppearanceForScope(tr, scope, rowTop)` — образец из `ColName` на `rowTop` |
 | Палитра vs scope | `[POSC] Палитра: ключей=N, имён=M` + первые 12 ключей без имени |
+| Диагностика bleed | `ReportMergeBoundaryBleedWarnings` — только `[POSC] ВНИМАНИЕ …` при остаточном bleed (см. §11) |
 
 ### Первая строка имени над цифрой марки (2026-06-14)
 

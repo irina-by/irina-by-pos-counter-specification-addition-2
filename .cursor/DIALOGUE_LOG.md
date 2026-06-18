@@ -439,3 +439,12 @@
 > Причина: f285c24 старее на ~526 строк; Desktop и 24322f2 — один файл (хеш a9d62a8a), финальный релиз AC 2016.
 > Правка: `git checkout 24322f2 -- PosCounter.Net/SpecGrid/TableGrid.cs`; docs DEVELOPER §11 — отметка о состоянии.
 > Результат: КОД ГОТОВ — 6465 строк, `TryLockColumnSchema` на месте; `ReportMergeBoundaryDiagnostic` убран из TableGrid (логи merge — этап 2); пересборка `build-ac2016.cmd` на ПК инженера.
+
+> [2026-06-17] Задача: этап 2 fix_merge_mark_boundary — исправить bleed имён на двуязычной спецификации (028_МВ_AR-rev2).
+> Причина: в `ResolveNameForKey` для merged `Math.Max(rowEndEx, nextMarkRow+1)` втягивал RU/EN строки следующей марки; граница должна быть `min(nextKeyTop, nextMarkRow)`.
+> Правка: `ResolveNextMarkBoundaryExclusive`, `FinalizeMarkBlockEndExclusive`; `ResolveNameForKey` и `GetMarkBlockEndExclusive`; `ReportMergeBoundaryBleedWarnings` (только ВНИМАНИЕ); docs DEVELOPER §11, plans/fix_merge_mark_boundary.md.
+> Результат: КОД ГОТОВ — пересборка на ПК инженера; проверка: марки 5,6,7,10,11 без слипания, в CMD нет ВНИМАНИЕ.
+
+> [2026-06-17] Задача: актуализация MD после этапа 2 fix_merge_mark_boundary.
+> Правка: `plans/fix_merge_mark_boundary.md`, `docs/DEVELOPER.md` §11 и §Merged-блоки, `Работа программы.md`, `factual_program_architecture.plan.md` §10, `INSTRUCTION_ENGINEER.md`, `README.md`.
+> Результат: документация согласована с кодом (`ResolveNextMarkBoundaryExclusive`, `ReportMergeBoundaryBleedWarnings`); проверка AutoCAD — ожидает инженера.

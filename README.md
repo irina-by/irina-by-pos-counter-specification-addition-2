@@ -93,6 +93,7 @@
 | | `[POSC] Граница шапки/данных…`, `KeyToRowMark…` |
 | | `[POSC] Количество не найдено в палитре…` — нет qty после ЗАПУСТИТЬ / фильтр |
 | | `[POSC] WriteQty итог: записано=…` — сколько ячеек «Кол.» заполнено |
+| | `[POSC] ВНИМАНИЕ Табл.… марка …` — слипание имён (сообщить разработчику) |
 | Предупреждения | колонка не распознана; сетка не построена; марки в «Поз.» не найдены |
 
 Подробности: **[docs/INSTRUCTION_ENGINEER.md](docs/INSTRUCTION_ENGINEER.md)** §8.1.
@@ -125,6 +126,7 @@
 | [Работа программы.md](Работа программы.md) | все | как работает программа, вопрос–ответ |
 | [docs/DEVELOPER.md](docs/DEVELOPER.md) | разработчик | методы, условия, красные зоны |
 | [docs/BUILD.md](docs/BUILD.md) | разработчик | сборка DLL |
+| [plans/fix_merge_mark_boundary.md](plans/fix_merge_mark_boundary.md) | разработчик | фикс bleed имён merge-марок (2026-06-17) |
 | [.cursor/plans/factual_program_architecture.plan.md](.cursor/plans/factual_program_architecture.plan.md) | разработчик | **единственный** факт-план: конвейер NETLOAD → «Кол.» |
 
 ### Основные файлы
